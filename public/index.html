@@ -269,7 +269,7 @@
         .add-btn {
             background: #4a6fa5;
             border: none;
-            font-size: 1rem;
+            font-size: 0.85rem;
             cursor: pointer;
             color: white;
             padding: 0.5rem 0.75rem;
@@ -543,6 +543,36 @@
             cursor: pointer;
             font-size: 0.9rem;
             font-weight: 500;
+        }
+
+        .emoji-picker {
+            position: fixed;
+            bottom: 80px;
+            right: 10px;
+            left: 10px;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 0.75rem;
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 0.5rem;
+            max-width: 320px;
+            margin: 0 auto;
+            z-index: 1001;
+            animation: slideUp 0.2s ease;
+        }
+
+        .emoji-picker span {
+            font-size: 1.8rem;
+            cursor: pointer;
+            padding: 0.25rem;
+            text-align: center;
+            transition: transform 0.1s;
+        }
+
+        .emoji-picker span:active {
+            transform: scale(1.2);
         }
 
         /* Модальные окна */
@@ -891,7 +921,7 @@
         const newChatBtn = document.getElementById('newChatBtn');
         const addFriendBtn = document.getElementById('addFriendBtn');
 
-        // Навигация
+        // Навигация по вкладкам
         document.querySelectorAll('.nav-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
@@ -913,8 +943,8 @@
             sidebarOverlay.classList.remove('active');
         }
 
-        menuToggle.onclick = toggleMenu;
-        sidebarOverlay.onclick = closeMenu;
+        if (menuToggle) menuToggle.onclick = toggleMenu;
+        if (sidebarOverlay) sidebarOverlay.onclick = closeMenu;
 
         // Аутентификация
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -924,6 +954,8 @@
                 const tab = btn.dataset.tab;
                 document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
                 document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+                document.getElementById('loginError').textContent = '';
+                document.getElementById('regError').textContent = '';
             });
         });
 
@@ -931,6 +963,10 @@
             e.preventDefault();
             const username = document.getElementById('regUsername').value.trim();
             const password = document.getElementById('regPassword').value;
+            if (!username || !password) {
+                document.getElementById('regError').textContent = 'Заполните все поля';
+                return;
+            }
             try {
                 const res = await fetch('/api/register', {
                     method: 'POST',
@@ -942,11 +978,12 @@
                     alert('✅ Регистрация успешна! Теперь войдите.');
                     document.querySelector('.tab-btn[data-tab="login"]').click();
                     document.getElementById('loginUsername').value = username;
+                    document.getElementById('loginPassword').value = '';
                 } else {
-                    document.getElementById('regError').textContent = data.error;
+                    document.getElementById('regError').textContent = data.error || 'Ошибка регистрации';
                 }
             } catch(err) {
-                document.getElementById('regError').textContent = '❌ Ошибка соединения';
+                document.getElementById('regError').textContent = '❌ Ошибка соединения с сервером';
             }
         });
 
@@ -954,6 +991,10 @@
             e.preventDefault();
             const username = document.getElementById('loginUsername').value.trim();
             const password = document.getElementById('loginPassword').value;
+            if (!username || !password) {
+                document.getElementById('loginError').textContent = 'Введите логин и пароль';
+                return;
+            }
             try {
                 const res = await fetch('/api/login', {
                     method: 'POST',
@@ -966,10 +1007,10 @@
                     currentUser = { id: data.userId, username: data.username };
                     initChat();
                 } else {
-                    document.getElementById('loginError').textContent = data.error;
+                    document.getElementById('loginError').textContent = data.error || 'Неверный логин или пароль';
                 }
             } catch(err) {
-                document.getElementById('loginError').textContent = '❌ Ошибка соединения';
+                document.getElementById('loginError').textContent = '❌ Ошибка соединения с сервером';
             }
         });
 
@@ -994,20 +1035,25 @@
                 renderChats();
                 renderFriends();
                 renderFriendRequests();
-            } catch(e) { console.error(e); }
+            } catch(e) { console.error('Error loading data:', e); }
         }
 
         function connectWebSocket() {
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             socket = new WebSocket(`${protocol}//${window.location.host}`);
+            
             socket.onopen = () => {
                 socket.send(JSON.stringify({ type: 'auth', token: currentToken }));
                 onlineStatusSpan.innerHTML = '🟢 Онлайн';
             };
+            
             socket.onmessage = (event) => {
-                const data = JSON.parse(event.data);
-                handleSocketMessage(data);
+                try {
+                    const data = JSON.parse(event.data);
+                    handleSocketMessage(data);
+                } catch(e) { console.error('Parse error:', e); }
             };
+            
             socket.onclose = () => {
                 onlineStatusSpan.innerHTML = '🔴 Офлайн';
                 setTimeout(connectWebSocket, 3000);
@@ -1042,12 +1088,20 @@
                     addMessageToChat(data, data.username === currentUser.username);
                     if (data.username !== currentUser.username) playNotification();
                     break;
+                case 'file':
+                    addFileToChat(data, data.username === currentUser.username);
+                    break;
                 case 'history':
                     messagesDiv.innerHTML = '';
-                    if (data.messages) data.messages.forEach(msg => addMessageToChat(msg, msg.username === currentUser.username, false));
+                    if (data.messages && data.messages.length) {
+                        data.messages.forEach(msg => addMessageToChat(msg, msg.username === currentUser.username, false));
+                    }
                     break;
                 case 'typing':
-                    typingIndicator.textContent = data.isTyping && data.username !== currentUser.username ? `${data.username} печатает...` : '';
+                    typingIndicator.textContent = (data.isTyping && data.username !== currentUser.username) ? `${data.username} печатает...` : '';
+                    break;
+                case 'user_left':
+                    addSystemMessage(`${data.username} покинул чат`);
                     break;
             }
         }
@@ -1062,9 +1116,14 @@
                 const chatDiv = document.createElement('div');
                 chatDiv.className = `chat-item ${room.id === currentRoom ? 'active' : ''}`;
                 let icon = room.type === 'public' ? '💬' : (room.type === 'direct' ? '👤' : '👥');
-                let displayName = room.type === 'public' ? 'Общий чат' : room.name;
+                let displayName = room.displayName || room.name;
+                if (room.type === 'public') displayName = 'Общий чат';
+                
                 chatDiv.innerHTML = `<div class="chat-info"><div class="chat-avatar">${icon}</div><div class="chat-details"><div class="chat-name">${escapeHtml(displayName)}</div><div class="chat-type">${room.type === 'public' ? 'Общий' : (room.type === 'direct' ? 'Личный' : 'Группа')}</div></div></div>`;
-                chatDiv.onclick = () => { switchRoom(room.id, displayName); closeMenu(); };
+                chatDiv.onclick = () => { 
+                    switchRoom(room.id, displayName); 
+                    closeMenu(); 
+                };
                 chatsList.appendChild(chatDiv);
             });
         }
@@ -1079,7 +1138,10 @@
                 const friendDiv = document.createElement('div');
                 friendDiv.className = 'friend-item';
                 friendDiv.innerHTML = `<div class="chat-info" style="flex:1"><div class="chat-avatar">👤</div><div class="chat-details"><div class="chat-name"><span class="friend-status ${friend.online ? 'online' : 'offline'}"></span>${escapeHtml(friend.username)}</div><div class="chat-type">${friend.online ? 'онлайн' : 'офлайн'}</div></div></div><button class="icon-btn chat-with-friend" data-id="${friend.id}" style="background:#4a6fa5; color:white; border-radius:20px; padding:0.5rem 1rem;"><i class="fas fa-comment"></i> Чат</button>`;
-                friendDiv.querySelector('.chat-with-friend').onclick = (e) => { e.stopPropagation(); startDirectChat(friend.id, friend.username); };
+                friendDiv.querySelector('.chat-with-friend').onclick = (e) => { 
+                    e.stopPropagation(); 
+                    startDirectChat(friend.id, friend.username); 
+                };
                 friendsList.appendChild(friendDiv);
             });
         }
@@ -1102,17 +1164,32 @@
         }
 
         async function acceptFriendRequest(requestId) {
-            const res = await fetch('/api/friends/accept', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, body: JSON.stringify({ requestId }) });
-            if (res.ok) { alert('✅ Вы стали друзьями!'); await loadData(); }
+            const res = await fetch('/api/friends/accept', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, 
+                body: JSON.stringify({ requestId }) 
+            });
+            if (res.ok) { 
+                alert('✅ Вы стали друзьями!'); 
+                await loadData(); 
+            }
         }
 
         async function rejectFriendRequest(requestId) {
-            const res = await fetch('/api/friends/reject', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, body: JSON.stringify({ requestId }) });
+            const res = await fetch('/api/friends/reject', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, 
+                body: JSON.stringify({ requestId }) 
+            });
             if (res.ok) await loadData();
         }
 
         async function startDirectChat(friendId, friendName) {
-            const res = await fetch('/api/rooms/direct', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, body: JSON.stringify({ friendId }) });
+            const res = await fetch('/api/rooms/direct', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, 
+                body: JSON.stringify({ friendId }) 
+            });
             if (res.ok) {
                 const room = await res.json();
                 await loadData();
@@ -1124,7 +1201,9 @@
         function switchRoom(roomId, roomName) {
             currentRoom = roomId;
             document.getElementById('currentRoomName').textContent = roomName || 'Чат';
-            if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'join_room', roomId: roomId }));
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                socket.send(JSON.stringify({ type: 'join_room', roomId: roomId }));
+            }
             renderChats();
         }
 
@@ -1141,10 +1220,20 @@
             if (!file) return;
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch('/api/upload', { method: 'POST', headers: { 'Authorization': `Bearer ${currentToken}` }, body: formData });
+            const res = await fetch('/api/upload', { 
+                method: 'POST', 
+                headers: { 'Authorization': `Bearer ${currentToken}` }, 
+                body: formData 
+            });
             if (res.ok) {
                 const data = await res.json();
-                socket.send(JSON.stringify({ type: 'file', fileUrl: data.fileUrl, fileType: data.fileType, originalName: data.originalName, roomId: currentRoom }));
+                socket.send(JSON.stringify({ 
+                    type: 'file', 
+                    fileUrl: data.fileUrl, 
+                    fileType: data.fileType, 
+                    originalName: data.originalName, 
+                    roomId: currentRoom 
+                }));
             }
             fileInput.value = '';
         }
@@ -1156,6 +1245,15 @@
             messageDiv.innerHTML = `<div class="message-header"><strong>${isOwn ? 'Вы' : escapeHtml(msg.username)}</strong><span>${time}</span></div><div class="message-content">${escapeHtml(msg.message)}</div>`;
             messagesDiv.appendChild(messageDiv);
             if (scroll) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addFileToChat(data, isOwn) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
+            let content = data.fileType === 'image' ? `<img src="${data.fileUrl}" class="message-image" onclick="window.open('${data.fileUrl}')" style="max-width:200px; border-radius:12px; cursor:pointer;">` : `<a href="${data.fileUrl}" target="_blank">📎 ${escapeHtml(data.originalName)}</a>`;
+            messageDiv.innerHTML = `<div class="message-header"><strong>${isOwn ? 'Вы' : escapeHtml(data.username)}</strong></div><div class="message-content">${content}</div>`;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
         function addSystemMessage(text) {
@@ -1207,7 +1305,9 @@
                 const query = e.target.value.trim();
                 if (query.length < 2) return;
                 searchTimeout = setTimeout(async () => {
-                    const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`, { headers: { 'Authorization': `Bearer ${currentToken}` } });
+                    const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`, { 
+                        headers: { 'Authorization': `Bearer ${currentToken}` } 
+                    });
                     const users = await res.json();
                     const results = document.getElementById('searchResultsChat');
                     results.innerHTML = '';
@@ -1241,7 +1341,10 @@
 
         document.getElementById('createGroupFromChat').onclick = () => {
             document.getElementById('newChatModal').style.display = 'none';
-            if (!friends || friends.length === 0) { alert('❌ У вас нет друзей для создания группы'); return; }
+            if (!friends || friends.length === 0) { 
+                alert('❌ У вас нет друзей для создания группы'); 
+                return; 
+            }
             const modal = document.getElementById('createGroupModal');
             modal.style.display = 'flex';
             document.getElementById('groupName').value = '';
@@ -1259,8 +1362,15 @@
             const groupName = document.getElementById('groupName').value.trim();
             const checkboxes = document.querySelectorAll('#friendsSelect input:checked');
             const members = Array.from(checkboxes).map(cb => parseInt(cb.value));
-            if (!groupName || members.length === 0) { alert('Введите название и выберите участников'); return; }
-            const res = await fetch('/api/rooms/private', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, body: JSON.stringify({ name: groupName, members }) });
+            if (!groupName || members.length === 0) { 
+                alert('Введите название и выберите участников'); 
+                return; 
+            }
+            const res = await fetch('/api/rooms/private', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, 
+                body: JSON.stringify({ name: groupName, members }) 
+            });
             if (res.ok) {
                 await loadData();
                 document.getElementById('createGroupModal').style.display = 'none';
@@ -1269,7 +1379,11 @@
         };
 
         async function addFriend(username) {
-            const res = await fetch('/api/friends/add', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, body: JSON.stringify({ friendUsername: username }) });
+            const res = await fetch('/api/friends/add', { 
+                method: 'POST', 
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentToken}` }, 
+                body: JSON.stringify({ friendUsername: username }) 
+            });
             const data = await res.json();
             alert(res.ok ? `✅ Запрос дружбы отправлен пользователю ${username}!` : `❌ ${data.error}`);
             if (res.ok) await loadData();
@@ -1280,9 +1394,12 @@
             close.onclick = () => document.querySelectorAll('.modal').forEach(modal => modal.style.display = 'none');
         });
         window.onclick = (event) => {
-            document.querySelectorAll('.modal').forEach(modal => { if (event.target === modal) modal.style.display = 'none'; });
+            document.querySelectorAll('.modal').forEach(modal => { 
+                if (event.target === modal) modal.style.display = 'none'; 
+            });
         };
 
+        // Event listeners
         messageInput.addEventListener('input', startTyping);
         sendBtn.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
@@ -1294,7 +1411,12 @@
                 emojis.forEach(emoji => {
                     const span = document.createElement('span');
                     span.textContent = emoji;
-                    span.onclick = (e) => { e.stopPropagation(); messageInput.value += emoji; emojiPicker.style.display = 'none'; messageInput.focus(); };
+                    span.onclick = (e) => { 
+                        e.stopPropagation(); 
+                        messageInput.value += emoji; 
+                        emojiPicker.style.display = 'none'; 
+                        messageInput.focus(); 
+                    };
                     emojiPicker.appendChild(span);
                 });
             }
@@ -1302,9 +1424,14 @@
 
         fileBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', sendFile);
-        logoutBtn.addEventListener('click', () => { if (socket) socket.close(); location.reload(); });
+        logoutBtn.addEventListener('click', () => { 
+            if (socket) socket.close(); 
+            location.reload(); 
+        });
         document.addEventListener('click', (e) => {
-            if (emojiBtn && !emojiBtn.contains(e.target) && emojiPicker && !emojiPicker.contains(e.target)) emojiPicker.style.display = 'none';
+            if (emojiBtn && !emojiBtn.contains(e.target) && emojiPicker && !emojiPicker.contains(e.target)) {
+                emojiPicker.style.display = 'none';
+            }
         });
     </script>
 </body>
