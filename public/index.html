@@ -3,14 +3,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Мессенджер 2.0</title>
+    <title>Мессенджер - Приватные чаты</title>
     <link rel="stylesheet" href="style.css">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
     <div id="loginScreen" class="screen">
         <div class="auth-container">
-            <h1>💬 Мессенджер 2.0</h1>
+            <h1>💬 Мессенджер</h1>
             <div class="auth-tabs">
                 <button class="tab-btn active" data-tab="login">Вход</button>
                 <button class="tab-btn" data-tab="register">Регистрация</button>
@@ -30,7 +30,6 @@
 
     <div id="chatScreen" class="screen" style="display:none">
         <div class="app-container">
-            <!-- Боковая панель -->
             <div class="sidebar">
                 <div class="user-info">
                     <div class="avatar" id="userAvatar">👤</div>
@@ -41,25 +40,32 @@
                     <button id="logoutBtn" class="icon-btn"><i class="fas fa-sign-out-alt"></i></button>
                 </div>
                 
-                <div class="rooms-section">
-                    <h3><i class="fas fa-hashtag"></i> Комнаты</h3>
-                    <div id="roomsList" class="rooms-list"></div>
-                    <button id="createRoomBtn" class="create-room-btn"><i class="fas fa-plus"></i> Создать комнату</button>
+                <!-- Кнопки для создания чатов -->
+                <div class="create-buttons">
+                    <button id="createGroupBtn" class="create-btn"><i class="fas fa-users"></i> Создать группу</button>
+                    <button id="createDirectBtn" class="create-btn"><i class="fas fa-user-plus"></i> Новый чат</button>
                 </div>
                 
-                <div class="users-section">
-                    <h3><i class="fas fa-users"></i> Пользователи онлайн</h3>
-                    <div id="onlineUsers" class="online-users"></div>
+                <!-- Список комнат -->
+                <div class="rooms-section">
+                    <h3><i class="fas fa-comments"></i> Чаты</h3>
+                    <div id="roomsList" class="rooms-list"></div>
+                </div>
+                
+                <!-- Список друзей -->
+                <div class="friends-section">
+                    <h3><i class="fas fa-user-friends"></i> Друзья</h3>
+                    <div id="friendsList" class="friends-list"></div>
                 </div>
             </div>
             
-            <!-- Основной чат -->
             <div class="chat-main">
                 <div class="chat-header">
                     <h2 id="currentRoomName">Общий чат</h2>
                     <div class="chat-actions">
                         <button id="emojiBtn" class="icon-btn"><i class="fas fa-smile"></i></button>
                         <button id="fileBtn" class="icon-btn"><i class="fas fa-paperclip"></i></button>
+                        <button id="infoBtn" class="icon-btn"><i class="fas fa-info-circle"></i></button>
                     </div>
                 </div>
                 
@@ -83,6 +89,27 @@
 
     <div id="emojiPicker" class="emoji-picker" style="display:none"></div>
     <input type="file" id="fileInput" style="display:none" accept="image/*,video/*,application/pdf">
+    
+    <!-- Модальные окна -->
+    <div id="createGroupModal" class="modal" style="display:none">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Создать групповой чат</h3>
+            <input type="text" id="groupName" placeholder="Название группы">
+            <h4>Выберите участников из друзей:</h4>
+            <div id="friendsSelect" class="friends-select"></div>
+            <button id="createGroupSubmit">Создать</button>
+        </div>
+    </div>
+    
+    <div id="createDirectModal" class="modal" style="display:none">
+        <div class="modal-content">
+            <span class="close">&times;</span>
+            <h3>Новый личный чат</h3>
+            <input type="text" id="searchUser" placeholder="Поиск по имени пользователя">
+            <div id="searchResults" class="search-results"></div>
+        </div>
+    </div>
 
     <script src="client.js"></script>
 </body>

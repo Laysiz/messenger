@@ -7,7 +7,6 @@ let isTyping = false;
 
 const emojis = ['😀', '😂', '😍', '😎', '😢', '😡', '👍', '❤️', '🔥', '🎉', '✨', '💀', '🐱', '🍕', '⚽', '🎮'];
 
-// DOM элементы
 const loginScreen = document.getElementById('loginScreen');
 const chatScreen = document.getElementById('chatScreen');
 const messagesDiv = document.getElementById('messages');
@@ -16,15 +15,19 @@ const sendBtn = document.getElementById('sendBtn');
 const currentUsername = document.getElementById('currentUsername');
 const onlineStatus = document.getElementById('onlineStatus');
 const roomsList = document.getElementById('roomsList');
-const onlineUsersDiv = document.getElementById('onlineUsers');
+const friendsList = document.getElementById('friendsList');
 const typingIndicator = document.getElementById('typingIndicator');
 const emojiBtn = document.getElementById('emojiBtn');
 const emojiPicker = document.getElementById('emojiPicker');
 const fileBtn = document.getElementById('fileBtn');
 const fileInput = document.getElementById('fileInput');
 const logoutBtn = document.getElementById('logoutBtn');
-const createRoomBtn = document.getElementById('createRoomBtn');
 const notificationSound = document.getElementById('notificationSound');
+const createGroupBtn = document.getElementById('createGroupBtn');
+const createDirectBtn = document.getElementById('createDirectBtn');
+
+let rooms = [];
+let friends = [];
 
 // Аутентификация
 document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -82,14 +85,8 @@ async function initChat() {
     chatScreen.style.display = 'flex';
     currentUsername.textContent = currentUser.username;
     
-    // Загрузка комнат
-    await loadRooms();
-    
-    // Подключение WebSocket
+    await loadFriends();
     connectWebSocket();
-    
-    // Загрузка истории
-    await loadHistory(currentRoom);
 }
 
 function connectWebSocket() {
@@ -98,7 +95,6 @@ function connectWebSocket() {
     
     socket.onopen = () => {
         socket.send(JSON.stringify({ type: 'auth', token: currentToken }));
-        socket.send(JSON.stringify({ type: 'join_room', roomId: currentRoom }));
         onlineStatus.textContent = '🟢 Онлайн';
     };
     
@@ -115,29 +111,26 @@ function connectWebSocket() {
 
 function handleSocketMessage(data) {
     switch(data.type) {
+        case 'rooms_list':
+            rooms = data.rooms;
+            renderRooms();
+            break;
+        case 'friends_list':
+            friends = data.friends;
+            renderFriends();
+            break;
         case 'message':
             addMessageToChat(data, data.username === currentUser.username);
-            if (data.username !== currentUser.username) {
-                playNotification();
-            }
+            if (data.username !== currentUser.username) playNotification();
             break;
         case 'file':
             addFileToChat(data, data.username === currentUser.username);
             break;
         case 'history':
+            messagesDiv.innerHTML = '';
             data.messages.forEach(msg => {
                 addMessageToChat(msg, msg.username === currentUser.username, false);
             });
-            break;
-        case 'online_users':
-            updateOnlineUsers(data.users);
-            break;
-        case 'user_joined':
-            addSystemMessage(`${data.username} присоединился к чату`);
-            playNotification();
-            break;
-        case 'user_left':
-            addSystemMessage(`${data.username} покинул чат`);
             break;
         case 'typing':
             if (data.isTyping && data.username !== currentUser.username) {
@@ -146,6 +139,79 @@ function handleSocketMessage(data) {
                 typingIndicator.textContent = '';
             }
             break;
+        case 'user_left':
+            addSystemMessage(`${data.username} покинул чат`);
+            break;
+    }
+}
+
+async function loadFriends() {
+    const res = await fetch('/api/friends', {
+        headers: { 'Authorization': `Bearer ${currentToken}` }
+    });
+    friends = await res.json();
+    renderFriends();
+}
+
+function renderRooms() {
+    roomsList.innerHTML = '';
+    rooms.forEach(room => {
+        const roomDiv = document.createElement('div');
+        roomDiv.className = `room-item ${room.id === currentRoom ? 'active' : ''}`;
+        
+        let icon = room.type === 'public' ? 'fa-hashtag' : (room.type === 'direct' ? 'fa-user' : 'fa-users');
+        let typeLabel = room.type === 'public' ? 'Публичный' : (room.type === 'direct' ? 'Личный' : 'Группа');
+        
+        roomDiv.innerHTML = `
+            <div style="flex:1">
+                <i class="fas ${icon}"></i> ${room.name}
+                <div class="room-type">${typeLabel}</div>
+            </div>
+        `;
+        
+        roomDiv.onclick = () => switchRoom(room.id, room.name, room.type);
+        roomsList.appendChild(roomDiv);
+    });
+}
+
+function renderFriends() {
+    friendsList.innerHTML = '';
+    friends.forEach(friend => {
+        const friendDiv = document.createElement('div');
+        friendDiv.className = 'friend-item';
+        friendDiv.innerHTML = `
+            <div>
+                <span class="friend-status ${friend.online ? 'online' : 'offline'}"></span>
+                ${friend.username}
+            </div>
+            <button class="icon-btn chat-with-friend" data-id="${friend.id}">
+                <i class="fas fa-comment"></i>
+            </button>
+        `;
+        
+        friendDiv.querySelector('.chat-with-friend').onclick = (e) => {
+            e.stopPropagation();
+            startDirectChat(friend.id);
+        };
+        
+        friendsList.appendChild(friendDiv);
+    });
+}
+
+async function startDirectChat(friendId) {
+    const res = await fetch('/api/rooms/direct', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ friendId })
+    });
+    
+    if (res.ok) {
+        const room = await res.json();
+        await loadRooms();
+        switchRoom(room.id, 'Личный чат', 'direct');
     }
 }
 
@@ -153,34 +219,14 @@ async function loadRooms() {
     const res = await fetch('/api/rooms', {
         headers: { 'Authorization': `Bearer ${currentToken}` }
     });
-    const rooms = await res.json();
-    
-    roomsList.innerHTML = '';
-    rooms.forEach(room => {
-        const roomDiv = document.createElement('div');
-        roomDiv.className = `room-item ${room.id === currentRoom ? 'active' : ''}`;
-        roomDiv.innerHTML = `<i class="fas fa-hashtag"></i> ${room.name}`;
-        roomDiv.onclick = () => switchRoom(room.id, room.name);
-        roomsList.appendChild(roomDiv);
-    });
+    rooms = await res.json();
+    renderRooms();
 }
 
-async function loadHistory(roomId) {
-    const res = await fetch(`/api/messages/${roomId}`, {
-        headers: { 'Authorization': `Bearer ${currentToken}` }
-    });
-    const messages = await res.json();
-    messagesDiv.innerHTML = '';
-    messages.forEach(msg => {
-        addMessageToChat(msg, msg.username === currentUser.username, false);
-    });
-}
-
-function switchRoom(roomId, roomName) {
+function switchRoom(roomId, roomName, roomType) {
     currentRoom = roomId;
     document.getElementById('currentRoomName').textContent = roomName;
     socket.send(JSON.stringify({ type: 'join_room', roomId }));
-    loadHistory(roomId);
     
     document.querySelectorAll('.room-item').forEach(item => {
         item.classList.remove('active');
@@ -231,11 +277,11 @@ async function sendFile() {
 
 function addMessageToChat(msg, isOwn, scroll = true) {
     const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${isOwn ? 'own' : 'other'} ${msg.isPrivate ? 'private' : ''}`;
+    messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
     
     messageDiv.innerHTML = `
         <div class="message-header">
-            <strong>${isOwn ? 'Вы' : msg.username}</strong> 
+            <strong>${isOwn ? 'Вы' : msg.username}</strong>
             <span>${new Date(msg.timestamp).toLocaleTimeString()}</span>
         </div>
         <div class="message-content">${escapeHtml(msg.message)}</div>
@@ -257,123 +303,4 @@ function addFileToChat(data, isOwn) {
     }
     
     messageDiv.innerHTML = `
-        <div class="message-header">
-            <strong>${isOwn ? 'Вы' : data.username}</strong>
-        </div>
-        <div class="message-content">${content}</div>
-    `;
-    
-    messagesDiv.appendChild(messageDiv);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-}
-
-function addSystemMessage(text) {
-    const sysDiv = document.createElement('div');
-    sysDiv.style.textAlign = 'center';
-    sysDiv.style.fontSize = '0.8rem';
-    sysDiv.style.color = '#888';
-    sysDiv.style.padding = '0.5rem';
-    sysDiv.textContent = text;
-    messagesDiv.appendChild(sysDiv);
-    messagesDiv.scrollTop = messagesDiv.scrollHeight;
-}
-
-function updateOnlineUsers(users) {
-    onlineUsersDiv.innerHTML = '';
-    users.forEach(userId => {
-        const userDiv = document.createElement('div');
-        userDiv.className = 'user-item';
-        userDiv.innerHTML = `<i class="fas fa-circle" style="color: #4caf50; font-size: 0.6rem;"></i> Пользователь ${userId}`;
-        userDiv.onclick = () => sendPrivateMessage(userId);
-        onlineUsersDiv.appendChild(userDiv);
-    });
-}
-
-function sendPrivateMessage(userId) {
-    const message = prompt('Введите личное сообщение:');
-    if (message) {
-        socket.send(JSON.stringify({
-            type: 'message',
-            message: `(личное) ${message}`,
-            isPrivate: true,
-            privateTo: userId
-        }));
-    }
-}
-
-function playNotification() {
-    notificationSound.play().catch(e => console.log('Audio not supported'));
-}
-
-function startTyping() {
-    if (!isTyping) {
-        isTyping = true;
-        socket.send(JSON.stringify({ type: 'typing', isTyping: true }));
-    }
-    clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(stopTyping, 1000);
-}
-
-function stopTyping() {
-    if (isTyping) {
-        isTyping = false;
-        socket.send(JSON.stringify({ type: 'typing', isTyping: false }));
-    }
-}
-
-function escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-}
-
-// Event listeners
-messageInput.addEventListener('input', startTyping);
-sendBtn.addEventListener('click', sendMessage);
-messageInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') sendMessage();
-});
-
-emojiBtn.addEventListener('click', () => {
-    emojiPicker.style.display = emojiPicker.style.display === 'none' ? 'grid' : 'none';
-    
-    if (emojiPicker.children.length === 0) {
-        emojis.forEach(emoji => {
-            const span = document.createElement('span');
-            span.textContent = emoji;
-            span.onclick = () => {
-                messageInput.value += emoji;
-                emojiPicker.style.display = 'none';
-                messageInput.focus();
-            };
-            emojiPicker.appendChild(span);
-        });
-    }
-});
-
-fileBtn.addEventListener('click', () => fileInput.click());
-fileInput.addEventListener('change', sendFile);
-logoutBtn.addEventListener('click', () => {
-    socket.close();
-    location.reload();
-});
-createRoomBtn.addEventListener('click', () => {
-    const name = prompt('Название комнаты:');
-    if (name) {
-        fetch('/api/rooms', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${currentToken}`
-            },
-            body: JSON.stringify({ name })
-        }).then(() => loadRooms());
-    }
-});
-
-// Закрыть emoji picker при клике вне
-document.addEventListener('click', (e) => {
-    if (!emojiBtn.contains(e.target) && !emojiPicker.contains(e.target)) {
-        emojiPicker.style.display = 'none';
-    }
-});
+       
