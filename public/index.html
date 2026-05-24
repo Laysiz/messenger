@@ -2,22 +2,87 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Локальный мессенджер</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>Мессенджер 2.0</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
 </head>
 <body>
-    <div class="chat-container">
-        <div class="chat-header">
-            <h2>💬 Локальный чат</h2>
-            <div class="status" id="status">⚫ Отключено</div>
-        </div>
-        <div class="chat-messages" id="messages"></div>
-        <div class="chat-input">
-            <input type="text" id="messageInput" placeholder="Введите сообщение..." autocomplete="off">
-            <button id="sendBtn">📤 Отправить</button>
+    <div id="loginScreen" class="screen">
+        <div class="auth-container">
+            <h1>💬 Мессенджер 2.0</h1>
+            <div class="auth-tabs">
+                <button class="tab-btn active" data-tab="login">Вход</button>
+                <button class="tab-btn" data-tab="register">Регистрация</button>
+            </div>
+            <form id="loginForm">
+                <input type="text" id="loginUsername" placeholder="Имя пользователя" required>
+                <input type="password" id="loginPassword" placeholder="Пароль" required>
+                <button type="submit">Войти</button>
+            </form>
+            <form id="registerForm" style="display:none">
+                <input type="text" id="regUsername" placeholder="Имя пользователя" required>
+                <input type="password" id="regPassword" placeholder="Пароль" required>
+                <button type="submit">Зарегистрироваться</button>
+            </form>
         </div>
     </div>
+
+    <div id="chatScreen" class="screen" style="display:none">
+        <div class="app-container">
+            <!-- Боковая панель -->
+            <div class="sidebar">
+                <div class="user-info">
+                    <div class="avatar" id="userAvatar">👤</div>
+                    <div class="user-details">
+                        <span id="currentUsername"></span>
+                        <small id="onlineStatus"></small>
+                    </div>
+                    <button id="logoutBtn" class="icon-btn"><i class="fas fa-sign-out-alt"></i></button>
+                </div>
+                
+                <div class="rooms-section">
+                    <h3><i class="fas fa-hashtag"></i> Комнаты</h3>
+                    <div id="roomsList" class="rooms-list"></div>
+                    <button id="createRoomBtn" class="create-room-btn"><i class="fas fa-plus"></i> Создать комнату</button>
+                </div>
+                
+                <div class="users-section">
+                    <h3><i class="fas fa-users"></i> Пользователи онлайн</h3>
+                    <div id="onlineUsers" class="online-users"></div>
+                </div>
+            </div>
+            
+            <!-- Основной чат -->
+            <div class="chat-main">
+                <div class="chat-header">
+                    <h2 id="currentRoomName">Общий чат</h2>
+                    <div class="chat-actions">
+                        <button id="emojiBtn" class="icon-btn"><i class="fas fa-smile"></i></button>
+                        <button id="fileBtn" class="icon-btn"><i class="fas fa-paperclip"></i></button>
+                    </div>
+                </div>
+                
+                <div class="messages-area" id="messagesArea">
+                    <div class="messages" id="messages"></div>
+                </div>
+                
+                <div class="typing-indicator" id="typingIndicator"></div>
+                
+                <div class="input-area">
+                    <input type="text" id="messageInput" placeholder="Введите сообщение..." autocomplete="off">
+                    <button id="sendBtn"><i class="fas fa-paper-plane"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <audio id="notificationSound" preload="auto">
+        <source src="https://www.soundjay.com/misc/sounds/bell-ringing-05.mp3" type="audio/mpeg">
+    </audio>
+
+    <div id="emojiPicker" class="emoji-picker" style="display:none"></div>
+    <input type="file" id="fileInput" style="display:none" accept="image/*,video/*,application/pdf">
 
     <script src="client.js"></script>
 </body>

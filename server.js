@@ -29,14 +29,13 @@ const storage = multer.diskStorage({
         cb(null, uniqueName);
     }
 });
-const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } }); // 10MB
+const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
 // Инициализация базы данных
 const db = new sqlite3.Database('database.sqlite');
 
 // Создание таблиц
 db.serialize(() => {
-    // Пользователи
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
@@ -45,7 +44,6 @@ db.serialize(() => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Комнаты
     db.run(`CREATE TABLE IF NOT EXISTS rooms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE,
@@ -53,7 +51,6 @@ db.serialize(() => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Сообщения
     db.run(`CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         room_id INTEGER,
@@ -67,7 +64,6 @@ db.serialize(() => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Участники комнат
     db.run(`CREATE TABLE IF NOT EXISTS room_members (
         room_id INTEGER,
         user_id INTEGER,
@@ -82,8 +78,8 @@ db.serialize(() => {
 });
 
 // Хранилище активных WebSocket соединений
-const clients = new Map(); // key: userId, value: ws
-const roomConnections = new Map(); // key: roomId, value: Set of userIds
+const clients = new Map();
+const roomConnections = new Map();
 
 // Middleware для аутентификации JWT
 function authenticateToken(req, res, next) {
@@ -169,7 +165,7 @@ app.get('/api/messages/:roomId', authenticateToken, (req, res) => {
 // WebSocket обработка
 wss.on('connection', (ws, req) => {
     let currentUser = null;
-    let currentRoom = 1; // Общая комната по умолчанию
+    let currentRoom = 1;
     
     ws.on('message', async (data) => {
         try {
@@ -177,17 +173,14 @@ wss.on('connection', (ws, req) => {
             
             switch(parsed.type) {
                 case 'auth':
-                    // Аутентификация через WebSocket
                     const token = parsed.token;
                     const decoded = jwt.verify(token, process.env.JWT_SECRET);
                     currentUser = { id: decoded.id, username: decoded.username };
                     clients.set(currentUser.id, ws);
                     
-                    // Отправляем список активных пользователей
                     const onlineUsers = Array.from(clients.keys());
                     ws.send(JSON.stringify({ type: 'online_users', users: onlineUsers }));
                     
-                    // Рассылаем всем обновленный список
                     broadcastToRoom(currentRoom, {
                         type: 'user_joined',
                         username: currentUser.username,
@@ -202,20 +195,19 @@ wss.on('connection', (ws, req) => {
                     }
                     roomConnections.get(currentRoom).add(currentUser.id);
                     
-                    // Отправляем историю комнаты
                     db.all(`SELECT * FROM messages WHERE room_id = ? AND is_private = 0 ORDER BY created_at ASC LIMIT 100`,
                         [currentRoom], (err, messages) => {
                         ws.send(JSON.stringify({ type: 'history', messages }));
                     });
                     break;
                     
-                case 'message':
+                case 'message': {
                     const { message, roomId, isPrivate, privateTo } = parsed;
+                    const targetRoom = roomId || currentRoom;
                     
-                    // Сохраняем в БД
                     db.run(`INSERT INTO messages (room_id, user_id, username, message, is_private, private_to)
                             VALUES (?, ?, ?, ?, ?, ?)`,
-                        [roomId || currentRoom, currentUser.id, currentUser.username, message, isPrivate || 0, privateTo || null]);
+                        [targetRoom, currentUser.id, currentUser.username, message, isPrivate || 0, privateTo || null]);
                     
                     const messageData = {
                         type: 'message',
@@ -227,26 +219,26 @@ wss.on('connection', (ws, req) => {
                     };
                     
                     if (isPrivate && privateTo) {
-                        // Личное сообщение
                         const targetWs = clients.get(privateTo);
                         if (targetWs) {
                             targetWs.send(JSON.stringify({ ...messageData, isPrivate: true, from: currentUser.username }));
                         }
                         ws.send(JSON.stringify({ ...messageData, isPrivate: true, to: privateTo, sent: true }));
                     } else {
-                        // Публичное сообщение в комнату
-                        broadcastToRoom(roomId || currentRoom, messageData);
+                        broadcastToRoom(targetRoom, messageData);
                     }
                     break;
+                }
                     
-                case 'file':
+                case 'file': {
                     const { fileUrl, fileType, originalName, roomId } = parsed;
+                    const targetRoom = roomId || currentRoom;
                     
                     db.run(`INSERT INTO messages (room_id, user_id, username, message, file_url, file_type)
                             VALUES (?, ?, ?, ?, ?, ?)`,
-                        [roomId || currentRoom, currentUser.id, currentUser.username, originalName, fileUrl, fileType]);
+                        [targetRoom, currentUser.id, currentUser.username, originalName, fileUrl, fileType]);
                     
-                    broadcastToRoom(roomId || currentRoom, {
+                    broadcastToRoom(targetRoom, {
                         type: 'file',
                         username: currentUser.username,
                         fileUrl: fileUrl,
@@ -255,6 +247,7 @@ wss.on('connection', (ws, req) => {
                         timestamp: new Date().toISOString()
                     });
                     break;
+                }
                     
                 case 'typing':
                     broadcastToRoom(currentRoom, {
@@ -281,7 +274,6 @@ wss.on('connection', (ws, req) => {
     });
 });
 
-// Функция широковещательной рассылки в комнату
 function broadcastToRoom(roomId, data) {
     const roomUsers = roomConnections.get(roomId);
     if (!roomUsers) return;
