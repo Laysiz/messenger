@@ -30,9 +30,7 @@ const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 }
 
 const db = new sqlite3.Database('database.sqlite');
 
-// Создание всех таблиц
 db.serialize(() => {
-    // Пользователи
     db.run(`CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT UNIQUE,
@@ -43,28 +41,25 @@ db.serialize(() => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Друзья
     db.run(`CREATE TABLE IF NOT EXISTS friends (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         friend_id INTEGER,
-        status TEXT DEFAULT 'pending', -- pending, accepted, blocked
+        status TEXT DEFAULT 'pending',
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY(user_id) REFERENCES users(id),
         FOREIGN KEY(friend_id) REFERENCES users(id),
         UNIQUE(user_id, friend_id)
     )`);
     
-    // Комнаты (публичные, приватные, личные чаты)
     db.run(`CREATE TABLE IF NOT EXISTS rooms (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
-        type TEXT DEFAULT 'public', -- public, private, direct
+        type TEXT DEFAULT 'public',
         created_by INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Участники комнат
     db.run(`CREATE TABLE IF NOT EXISTS room_members (
         room_id INTEGER,
         user_id INTEGER,
@@ -74,7 +69,6 @@ db.serialize(() => {
         UNIQUE(room_id, user_id)
     )`);
     
-    // Сообщения
     db.run(`CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         room_id INTEGER,
@@ -86,7 +80,6 @@ db.serialize(() => {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )`);
     
-    // Создаем только одну публичную комнату по умолчанию
     db.run(`INSERT OR IGNORE INTO rooms (id, name, type, created_by) VALUES (1, 'Общий чат', 'public', 1)`);
 });
 
@@ -104,9 +97,6 @@ function authenticateToken(req, res, next) {
     });
 }
 
-// API Endpoints
-
-// Регистрация
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -121,7 +111,6 @@ app.post('/api/register', async (req, res) => {
     });
 });
 
-// Логин
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
     
@@ -131,7 +120,6 @@ app.post('/api/login', async (req, res) => {
         const valid = await bcrypt.compare(password, user.password);
         if (!valid) return res.status(400).json({ error: 'Invalid password' });
         
-        // Обновляем статус онлайн
         db.run(`UPDATE users SET online = 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, [user.id]);
         
         const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET);
@@ -139,7 +127,6 @@ app.post('/api/login', async (req, res) => {
     });
 });
 
-// Поиск пользователей
 app.get('/api/users/search', authenticateToken, (req, res) => {
     const { q } = req.query;
     db.all(`SELECT id, username FROM users WHERE username LIKE ? AND id != ? LIMIT 10`, 
@@ -148,7 +135,6 @@ app.get('/api/users/search', authenticateToken, (req, res) => {
     });
 });
 
-// Получение списка друзей
 app.get('/api/friends', authenticateToken, (req, res) => {
     db.all(`
         SELECT u.id, u.username, u.online, f.status 
@@ -162,7 +148,6 @@ app.get('/api/friends', authenticateToken, (req, res) => {
     });
 });
 
-// Добавить в друзья
 app.post('/api/friends/add', authenticateToken, (req, res) => {
     const { friendUsername } = req.body;
     
@@ -178,11 +163,10 @@ app.post('/api/friends/add', authenticateToken, (req, res) => {
     });
 });
 
-// Получение комнат пользователя
 app.get('/api/rooms', authenticateToken, (req, res) => {
     db.all(`
         SELECT DISTINCT r.* FROM rooms r
-        JOIN room_members rm ON rm.room_id = r.id
+        LEFT JOIN room_members rm ON rm.room_id = r.id
         WHERE rm.user_id = ? OR r.type = 'public'
         ORDER BY r.created_at DESC
     `, [req.user.id], (err, rooms) => {
@@ -190,20 +174,16 @@ app.get('/api/rooms', authenticateToken, (req, res) => {
     });
 });
 
-// Создание приватной комнаты
 app.post('/api/rooms/private', authenticateToken, (req, res) => {
-    const { name, members } = req.body; // members - массив ID пользователей
+    const { name, members } = req.body;
     
     db.run(`INSERT INTO rooms (name, type, created_by) VALUES (?, 'private', ?)`,
         [name, req.user.id], function(err) {
         if (err) return res.status(400).json({ error: 'Error creating room' });
         
         const roomId = this.lastID;
-        
-        // Добавляем создателя
         db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, req.user.id]);
         
-        // Добавляем остальных участников
         members.forEach(memberId => {
             db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, memberId]);
         });
@@ -212,37 +192,32 @@ app.post('/api/rooms/private', authenticateToken, (req, res) => {
     });
 });
 
-// Создание личного чата (direct)
 app.post('/api/rooms/direct', authenticateToken, (req, res) => {
     const { friendId } = req.body;
     
-    // Проверяем, существует ли уже личный чат между этими пользователями
     db.get(`
         SELECT r.id FROM rooms r
         JOIN room_members rm1 ON rm1.room_id = r.id AND rm1.user_id = ?
         JOIN room_members rm2 ON rm2.room_id = r.id AND rm2.user_id = ?
-        WHERE r.type = 'direct' AND rm1.user_id = ? AND rm2.user_id = ?
-    `, [req.user.id, friendId, req.user.id, friendId], (err, existing) => {
+        WHERE r.type = 'direct'
+    `, [req.user.id, friendId], (err, existing) => {
         if (existing) {
             return res.json({ id: existing.id, name: 'Личный чат', type: 'direct', existing: true });
         }
         
-        // Создаем новый личный чат
-        const chatName = `Чат с пользователем`;
         db.run(`INSERT INTO rooms (name, type, created_by) VALUES (?, 'direct', ?)`,
-            [chatName, req.user.id], function(err) {
+            ['Личный чат', req.user.id], function(err) {
             if (err) return res.status(400).json({ error: 'Error creating direct chat' });
             
             const roomId = this.lastID;
             db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, req.user.id]);
             db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, friendId]);
             
-            res.json({ id: roomId, name: chatName, type: 'direct' });
+            res.json({ id: roomId, name: 'Личный чат', type: 'direct' });
         });
     });
 });
 
-// Получение сообщений комнаты
 app.get('/api/messages/:roomId', authenticateToken, (req, res) => {
     const { roomId } = req.params;
     const { limit = 100 } = req.query;
@@ -253,7 +228,6 @@ app.get('/api/messages/:roomId', authenticateToken, (req, res) => {
     });
 });
 
-// Загрузка файла
 app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     
@@ -263,7 +237,7 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
     res.json({ fileUrl, fileType, originalName: req.file.originalname });
 });
 
-// WebSocket обработка
+// WebSocket обработка - ИСПРАВЛЕНА!
 wss.on('connection', (ws) => {
     let currentUser = null;
     let currentRoom = 1;
@@ -273,15 +247,13 @@ wss.on('connection', (ws) => {
             const parsed = JSON.parse(data);
             
             switch(parsed.type) {
-                case 'auth':
+                case 'auth': {
                     const decoded = jwt.verify(parsed.token, process.env.JWT_SECRET);
                     currentUser = { id: decoded.id, username: decoded.username };
                     clients.set(currentUser.id, ws);
                     
-                    // Обновляем статус в БД
                     db.run(`UPDATE users SET online = 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, [currentUser.id]);
                     
-                    // Отправляем список комнат
                     db.all(`
                         SELECT DISTINCT r.* FROM rooms r
                         LEFT JOIN room_members rm ON rm.room_id = r.id
@@ -290,7 +262,6 @@ wss.on('connection', (ws) => {
                         ws.send(JSON.stringify({ type: 'rooms_list', rooms }));
                     });
                     
-                    // Отправляем список друзей
                     db.all(`
                         SELECT u.id, u.username, u.online 
                         FROM friends f
@@ -300,22 +271,23 @@ wss.on('connection', (ws) => {
                         ws.send(JSON.stringify({ type: 'friends_list', friends }));
                     });
                     break;
+                }
                     
-                case 'join_room':
+                case 'join_room': {
                     currentRoom = parsed.roomId;
                     if (!roomConnections.has(currentRoom)) {
                         roomConnections.set(currentRoom, new Set());
                     }
                     roomConnections.get(currentRoom).add(currentUser.id);
                     
-                    // Отправляем историю
                     db.all(`SELECT * FROM messages WHERE room_id = ? ORDER BY created_at ASC LIMIT 100`,
                         [currentRoom], (err, messages) => {
                         ws.send(JSON.stringify({ type: 'history', messages }));
                     });
                     break;
+                }
                     
-                case 'message':
+                case 'message': {
                     const { message, roomId } = parsed;
                     const targetRoom = roomId || currentRoom;
                     
@@ -333,8 +305,9 @@ wss.on('connection', (ws) => {
                     
                     broadcastToRoom(targetRoom, messageData);
                     break;
+                }
                     
-                case 'file':
+                case 'file': {
                     const { fileUrl, fileType, originalName, roomId } = parsed;
                     const targetRoomFile = roomId || currentRoom;
                     
@@ -350,14 +323,16 @@ wss.on('connection', (ws) => {
                         timestamp: new Date().toISOString()
                     });
                     break;
+                }
                     
-                case 'typing':
+                case 'typing': {
                     broadcastToRoom(currentRoom, {
                         type: 'typing',
                         username: currentUser.username,
                         isTyping: parsed.isTyping
                     });
                     break;
+                }
             }
         } catch(e) {
             console.error('WebSocket error:', e);
