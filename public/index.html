@@ -188,17 +188,18 @@
             background: #3a5a8c;
         }
 
-        .rooms-section, .friends-section {
+        .rooms-section, .friends-section, .requests-section {
             padding: 1rem;
+            border-bottom: 1px solid #e0e0e0;
         }
 
-        .rooms-section h3, .friends-section h3 {
+        .rooms-section h3, .friends-section h3, .requests-section h3 {
             font-size: 0.85rem;
             color: #666;
             margin-bottom: 0.75rem;
         }
 
-        .rooms-list, .friends-list {
+        .rooms-list, .friends-list, .friend-requests-list {
             display: flex;
             flex-direction: column;
             gap: 0.5rem;
@@ -242,6 +243,34 @@
 
         .friend-status.offline {
             background: #9e9e9e;
+        }
+
+        .request-item {
+            padding: 0.5rem;
+            background: #fff3e0;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .request-item button {
+            padding: 0.25rem 0.5rem;
+            margin-left: 0.25rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+
+        .request-item .accept-btn {
+            background: #4caf50;
+            color: white;
+        }
+
+        .request-item .reject-btn {
+            background: #f44336;
+            color: white;
         }
 
         .chat-main {
@@ -514,10 +543,6 @@
                 background: #f8f9fa;
             }
             
-            .sidebar.open {
-                left: 0;
-            }
-            
             .message {
                 max-width: 85%;
             }
@@ -594,12 +619,17 @@
                 
                 <div class="create-buttons">
                     <button id="createGroupBtn" class="create-btn"><i class="fas fa-users"></i> Создать группу</button>
-                    <button id="createDirectBtn" class="create-btn"><i class="fas fa-user-plus"></i> Новый чат</button>
+                    <button id="createDirectBtn" class="create-btn"><i class="fas fa-user-plus"></i> Добавить друга</button>
                 </div>
                 
                 <div class="rooms-section">
                     <h3><i class="fas fa-comments"></i> Чаты</h3>
                     <div id="roomsList" class="rooms-list"></div>
+                </div>
+                
+                <div class="requests-section">
+                    <h3><i class="fas fa-user-plus"></i> Запросы в друзья</h3>
+                    <div id="friendRequestsList" class="friend-requests-list"></div>
                 </div>
                 
                 <div class="friends-section">
@@ -689,6 +719,7 @@
         const onlineStatusSpan = document.getElementById('onlineStatus');
         const roomsList = document.getElementById('roomsList');
         const friendsList = document.getElementById('friendsList');
+        const friendRequestsList = document.getElementById('friendRequestsList');
         const typingIndicator = document.getElementById('typingIndicator');
         const emojiBtn = document.getElementById('emojiBtn');
         const emojiPicker = document.getElementById('emojiPicker');
@@ -700,6 +731,7 @@
 
         let rooms = [];
         let friends = [];
+        let friendRequests = [];
 
         // Переключение табов
         document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -787,6 +819,7 @@
             currentUsernameSpan.textContent = currentUser.username;
             
             await loadFriends();
+            await loadFriendRequests();
             connectWebSocket();
         }
 
@@ -837,6 +870,21 @@
                     renderFriends();
                     console.log('Друзья загружены:', friends.length);
                     break;
+                case 'friend_requests':
+                    friendRequests = data.requests || [];
+                    renderFriendRequests();
+                    break;
+                case 'friend_request':
+                    addSystemMessage(`📨 ${data.from.username} хочет добавить вас в друзья!`);
+                    loadFriendRequests();
+                    playNotification();
+                    break;
+                case 'friend_accepted':
+                    addSystemMessage(`✅ ${data.by.username} принял(а) ваш запрос в друзья!`);
+                    loadFriends();
+                    loadFriendRequests();
+                    playNotification();
+                    break;
                 case 'message':
                     addMessageToChat(data, data.username === currentUser.username);
                     if (data.username !== currentUser.username) playNotification();
@@ -880,6 +928,21 @@
             }
         }
 
+        async function loadFriendRequests() {
+            try {
+                const res = await fetch('/api/friends/requests', {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                if (res.ok) {
+                    const data = await res.json();
+                    friendRequests = data;
+                    renderFriendRequests();
+                }
+            } catch(e) {
+                console.error('Error loading friend requests:', e);
+            }
+        }
+
         async function loadRooms() {
             try {
                 const res = await fetch('/api/rooms', {
@@ -909,9 +972,6 @@
                 let icon = room.type === 'public' ? 'fa-hashtag' : (room.type === 'direct' ? 'fa-user' : 'fa-users');
                 let typeLabel = room.type === 'public' ? 'Публичный' : (room.type === 'direct' ? 'Личный' : 'Группа');
                 let displayName = room.name;
-                if (room.type === 'direct') {
-                    displayName = `💬 ${displayName}`;
-                }
                 
                 roomDiv.innerHTML = `
                     <div style="flex:1">
@@ -929,7 +989,7 @@
             friendsList.innerHTML = '';
             
             if (!friends || friends.length === 0) {
-                friendsList.innerHTML = '<div style="padding: 0.5rem; color: #888; text-align: center;">😔 Нет друзей<br><small>Добавьте друзей через "Новый чат"</small></div>';
+                friendsList.innerHTML = '<div style="padding: 0.5rem; color: #888; text-align: center;">😔 Нет друзей<br><small>Добавьте друзей через кнопку "Добавить друга"</small></div>';
                 return;
             }
             
@@ -961,6 +1021,81 @@
             });
         }
 
+        function renderFriendRequests() {
+            if (!friendRequestsList) return;
+            
+            friendRequestsList.innerHTML = '';
+            
+            if (!friendRequests || friendRequests.length === 0) {
+                friendRequestsList.innerHTML = '<div style="padding: 0.5rem; color: #888; text-align: center;">Нет входящих запросов</div>';
+                return;
+            }
+            
+            friendRequests.forEach(req => {
+                const div = document.createElement('div');
+                div.className = 'request-item';
+                div.innerHTML = `
+                    <span>👤 ${escapeHtml(req.username)}</span>
+                    <div>
+                        <button class="accept-btn" data-request-id="${req.request_id}">✓ Принять</button>
+                        <button class="reject-btn" data-request-id="${req.request_id}">✗ Отклонить</button>
+                    </div>
+                `;
+                
+                div.querySelector('.accept-btn').onclick = () => acceptFriendRequest(req.request_id);
+                div.querySelector('.reject-btn').onclick = () => rejectFriendRequest(req.request_id);
+                
+                friendRequestsList.appendChild(div);
+            });
+        }
+
+        async function acceptFriendRequest(requestId) {
+            try {
+                const res = await fetch('/api/friends/accept', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ requestId })
+                });
+                
+                if (res.ok) {
+                    alert('✅ Запрос принят! Теперь вы друзья.');
+                    await loadFriends();
+                    await loadFriendRequests();
+                } else {
+                    alert('❌ Ошибка при принятии запроса');
+                }
+            } catch(e) {
+                console.error('Accept error:', e);
+                alert('❌ Ошибка соединения');
+            }
+        }
+
+        async function rejectFriendRequest(requestId) {
+            try {
+                const res = await fetch('/api/friends/reject', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ requestId })
+                });
+                
+                if (res.ok) {
+                    alert('❌ Запрос отклонен');
+                    await loadFriendRequests();
+                } else {
+                    alert('Ошибка при отклонении');
+                }
+            } catch(e) {
+                console.error('Reject error:', e);
+                alert('❌ Ошибка соединения');
+            }
+        }
+
         async function startDirectChat(friendId) {
             try {
                 const res = await fetch('/api/rooms/direct', {
@@ -976,7 +1111,6 @@
                     const room = await res.json();
                     await loadRooms();
                     switchRoom(room.id, 'Личный чат', 'direct');
-                    // Закрываем модальное окно
                     document.getElementById('createDirectModal').style.display = 'none';
                 } else {
                     const error = await res.json();
@@ -996,19 +1130,12 @@
                 socket.send(JSON.stringify({ type: 'join_room', roomId: roomId }));
             }
             
-            // Обновляем активный класс
             document.querySelectorAll('.room-item').forEach(item => {
                 item.classList.remove('active');
-            });
-            
-            // Находим и активируем текущую комнату
-            const items = document.querySelectorAll('.room-item');
-            for (let item of items) {
-                if (item.textContent.includes(roomName) || (roomId && item.onclick.toString().includes(roomId))) {
+                if (item.textContent.includes(roomName)) {
                     item.classList.add('active');
-                    break;
                 }
-            }
+            });
         }
 
         function sendMessage() {
@@ -1148,7 +1275,7 @@
         // Создание группы
         createGroupBtn.onclick = () => {
             if (!friends || friends.length === 0) {
-                alert('❌ У вас нет друзей. Сначала добавьте друзей через "Новый чат"');
+                alert('❌ У вас нет друзей. Сначала добавьте друзей через "Добавить друга"');
                 return;
             }
             
@@ -1170,7 +1297,7 @@
             });
         };
 
-        // Создание личного чата и добавление в друзья
+        // Добавление друга
         createDirectBtn.onclick = () => {
             const modal = document.getElementById('createDirectModal');
             modal.style.display = 'flex';
@@ -1207,7 +1334,6 @@
                             return;
                         }
                         
-                        // Проверяем текущих друзей
                         const currentFriends = friends || [];
                         
                         for (const user of users) {
@@ -1216,32 +1342,31 @@
                             
                             const isFriend = currentFriends.some(f => f.id === user.id);
                             const isSelf = user.id === currentUser.id;
+                            const isRequestPending = friendRequests.some(r => r.id === user.id);
                             
                             if (isSelf) {
                                 div.innerHTML = `<span><strong>${escapeHtml(user.username)}</strong> <span style="color:#888;">(это вы)</span></span>`;
+                            } else if (isFriend) {
+                                div.innerHTML = `<span><strong>${escapeHtml(user.username)}</strong> <span style="color:#4caf50;">✓ уже в друзьях</span></span>`;
+                            } else if (isRequestPending) {
+                                div.innerHTML = `<span><strong>${escapeHtml(user.username)}</strong> <span style="color:#ff9800;">⏳ запрос отправлен</span></span>`;
                             } else {
                                 div.innerHTML = `
                                     <span><strong>${escapeHtml(user.username)}</strong></span>
-                                    <button class="add-friend-btn" data-id="${user.id}" data-username="${escapeHtml(user.username)}" ${isFriend ? 'disabled' : ''}>
-                                        ${isFriend ? '✅ В друзьях' : '➕ Добавить в друзья'}
+                                    <button class="add-friend-btn" data-id="${user.id}" data-username="${escapeHtml(user.username)}">
+                                        ➕ Отправить запрос
                                     </button>
                                 `;
                                 
-                                if (!isFriend && !isSelf) {
-                                    const btn = div.querySelector('.add-friend-btn');
-                                    btn.onclick = async () => {
-                                        btn.textContent = '⏳ Отправка...';
-                                        btn.disabled = true;
-                                        await addFriend(user.username);
-                                        modal.style.display = 'none';
-                                        searchInput.value = '';
-                                        results.innerHTML = '';
-                                    };
-                                } else if (isFriend) {
-                                    const btn = div.querySelector('.add-friend-btn');
-                                    btn.style.opacity = '0.6';
-                                    btn.style.cursor = 'not-allowed';
-                                }
+                                const btn = div.querySelector('.add-friend-btn');
+                                btn.onclick = async () => {
+                                    btn.textContent = '⏳ Отправка...';
+                                    btn.disabled = true;
+                                    await addFriend(user.username);
+                                    modal.style.display = 'none';
+                                    searchInput.value = '';
+                                    results.innerHTML = '';
+                                };
                             }
                             
                             results.appendChild(div);
@@ -1253,11 +1378,9 @@
                 }, 500);
             };
             
-            // Фокусируемся на поле поиска
             setTimeout(() => searchInput.focus(), 100);
         };
 
-        // Функция добавления в друзья
         async function addFriend(username) {
             try {
                 const res = await fetch('/api/friends/add', {
@@ -1273,11 +1396,9 @@
                 
                 if (res.ok) {
                     alert(`✅ Запрос дружбы отправлен пользователю ${username}!`);
-                    await loadFriends();
-                    await loadRooms();
                     return true;
                 } else {
-                    alert(`❌ Ошибка: ${data.error || 'Не удалось добавить друга'}`);
+                    alert(`❌ Ошибка: ${data.error || 'Не удалось отправить запрос'}`);
                     return false;
                 }
             } catch(e) {
@@ -1334,7 +1455,6 @@
             };
         });
 
-        // Закрытие модальных окон по клику вне содержимого
         window.onclick = (event) => {
             document.querySelectorAll('.modal').forEach(modal => {
                 if (event.target === modal) {
@@ -1383,7 +1503,6 @@
             location.reload();
         });
 
-        // Закрыть панель смайликов при клике вне
         document.addEventListener('click', (e) => {
             if (emojiBtn && !emojiBtn.contains(e.target) && emojiPicker && !emojiPicker.contains(e.target)) {
                 emojiPicker.style.display = 'none';

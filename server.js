@@ -97,6 +97,8 @@ function authenticateToken(req, res, next) {
     });
 }
 
+// API Endpoints
+
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
@@ -135,19 +137,33 @@ app.get('/api/users/search', authenticateToken, (req, res) => {
     });
 });
 
+// Получение входящих запросов в друзья
+app.get('/api/friends/requests', authenticateToken, (req, res) => {
+    db.all(`
+        SELECT u.id, u.username, u.online, f.id as request_id
+        FROM friends f
+        JOIN users u ON u.id = f.user_id
+        WHERE f.friend_id = ? AND f.status = 'pending'
+    `, [req.user.id], (err, requests) => {
+        res.json(requests || []);
+    });
+});
+
+// Получение списка друзей (только принятые)
 app.get('/api/friends', authenticateToken, (req, res) => {
     db.all(`
-        SELECT u.id, u.username, u.online, f.status 
+        SELECT DISTINCT u.id, u.username, u.online, f.status 
         FROM friends f
         JOIN users u ON (u.id = f.friend_id OR u.id = f.user_id)
         WHERE (f.user_id = ? OR f.friend_id = ?) 
         AND u.id != ?
         AND f.status = 'accepted'
     `, [req.user.id, req.user.id, req.user.id], (err, friends) => {
-        res.json(friends);
+        res.json(friends || []);
     });
 });
 
+// Отправить запрос в друзья
 app.post('/api/friends/add', authenticateToken, (req, res) => {
     const { friendUsername } = req.body;
     
@@ -155,11 +171,84 @@ app.post('/api/friends/add', authenticateToken, (req, res) => {
         if (err || !user) return res.status(404).json({ error: 'User not found' });
         if (user.id === req.user.id) return res.status(400).json({ error: 'Cannot add yourself' });
         
-        db.run(`INSERT OR IGNORE INTO friends (user_id, friend_id, status) VALUES (?, ?, 'pending')`,
-            [req.user.id, user.id], function(err) {
-            if (err) return res.status(400).json({ error: 'Friend request already sent' });
-            res.json({ success: true, message: 'Friend request sent' });
+        // Проверяем, есть ли уже запрос
+        db.get(`SELECT * FROM friends WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)`,
+            [req.user.id, user.id, user.id, req.user.id], (err, existing) => {
+            if (existing) {
+                if (existing.status === 'pending') {
+                    return res.status(400).json({ error: 'Friend request already sent' });
+                } else if (existing.status === 'accepted') {
+                    return res.status(400).json({ error: 'Already friends' });
+                }
+            }
+            
+            db.run(`INSERT INTO friends (user_id, friend_id, status) VALUES (?, ?, 'pending')`,
+                [req.user.id, user.id], function(err) {
+                if (err) return res.status(400).json({ error: 'Error sending friend request' });
+                
+                // Отправляем уведомление через WebSocket
+                const targetSocket = clients.get(user.id);
+                if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+                    targetSocket.send(JSON.stringify({
+                        type: 'friend_request',
+                        from: {
+                            id: req.user.id,
+                            username: req.user.username
+                        }
+                    }));
+                }
+                
+                res.json({ success: true, message: 'Friend request sent' });
+            });
         });
+    });
+});
+
+// Принять запрос в друзья
+app.post('/api/friends/accept', authenticateToken, (req, res) => {
+    const { requestId } = req.body;
+    
+    db.run(`UPDATE friends SET status = 'accepted' WHERE id = ? AND friend_id = ?`,
+        [requestId, req.user.id], function(err) {
+        if (err || this.changes === 0) {
+            return res.status(400).json({ error: 'Failed to accept request' });
+        }
+        
+        // Получаем информацию о друге
+        db.get(`
+            SELECT u.id, u.username FROM friends f
+            JOIN users u ON u.id = f.user_id
+            WHERE f.id = ?
+        `, [requestId], (err, friend) => {
+            if (friend) {
+                // Уведомляем отправителя
+                const senderSocket = clients.get(friend.id);
+                if (senderSocket && senderSocket.readyState === WebSocket.OPEN) {
+                    senderSocket.send(JSON.stringify({
+                        type: 'friend_accepted',
+                        by: {
+                            id: req.user.id,
+                            username: req.user.username
+                        }
+                    }));
+                }
+            }
+        });
+        
+        res.json({ success: true, message: 'Friend request accepted' });
+    });
+});
+
+// Отклонить запрос в друзья
+app.post('/api/friends/reject', authenticateToken, (req, res) => {
+    const { requestId } = req.body;
+    
+    db.run(`DELETE FROM friends WHERE id = ? AND friend_id = ?`,
+        [requestId, req.user.id], function(err) {
+        if (err || this.changes === 0) {
+            return res.status(400).json({ error: 'Failed to reject request' });
+        }
+        res.json({ success: true, message: 'Friend request rejected' });
     });
 });
 
@@ -170,7 +259,7 @@ app.get('/api/rooms', authenticateToken, (req, res) => {
         WHERE rm.user_id = ? OR r.type = 'public'
         ORDER BY r.created_at DESC
     `, [req.user.id], (err, rooms) => {
-        res.json(rooms);
+        res.json(rooms || []);
     });
 });
 
@@ -224,7 +313,7 @@ app.get('/api/messages/:roomId', authenticateToken, (req, res) => {
     
     db.all(`SELECT * FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ?`,
         [roomId, limit], (err, messages) => {
-        res.json(messages.reverse());
+        res.json(messages.reverse() || []);
     });
 });
 
@@ -237,7 +326,7 @@ app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => 
     res.json({ fileUrl, fileType, originalName: req.file.originalname });
 });
 
-// WebSocket обработка - ИСПРАВЛЕНА!
+// WebSocket обработка
 wss.on('connection', (ws) => {
     let currentUser = null;
     let currentRoom = 1;
@@ -254,21 +343,35 @@ wss.on('connection', (ws) => {
                     
                     db.run(`UPDATE users SET online = 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, [currentUser.id]);
                     
+                    // Отправляем список комнат
                     db.all(`
                         SELECT DISTINCT r.* FROM rooms r
                         LEFT JOIN room_members rm ON rm.room_id = r.id
                         WHERE rm.user_id = ? OR r.type = 'public'
                     `, [currentUser.id], (err, rooms) => {
-                        ws.send(JSON.stringify({ type: 'rooms_list', rooms }));
+                        ws.send(JSON.stringify({ type: 'rooms_list', rooms: rooms || [] }));
                     });
                     
+                    // Отправляем список друзей
                     db.all(`
-                        SELECT u.id, u.username, u.online 
+                        SELECT DISTINCT u.id, u.username, u.online, f.status 
                         FROM friends f
                         JOIN users u ON (u.id = f.friend_id OR u.id = f.user_id)
-                        WHERE (f.user_id = ? OR f.friend_id = ?) AND u.id != ? AND f.status = 'accepted'
+                        WHERE (f.user_id = ? OR f.friend_id = ?) 
+                        AND u.id != ?
+                        AND f.status = 'accepted'
                     `, [currentUser.id, currentUser.id, currentUser.id], (err, friends) => {
-                        ws.send(JSON.stringify({ type: 'friends_list', friends }));
+                        ws.send(JSON.stringify({ type: 'friends_list', friends: friends || [] }));
+                    });
+                    
+                    // Отправляем входящие запросы в друзья
+                    db.all(`
+                        SELECT u.id, u.username, u.online, f.id as request_id
+                        FROM friends f
+                        JOIN users u ON u.id = f.user_id
+                        WHERE f.friend_id = ? AND f.status = 'pending'
+                    `, [currentUser.id], (err, requests) => {
+                        ws.send(JSON.stringify({ type: 'friend_requests', requests: requests || [] }));
                     });
                     break;
                 }
@@ -282,7 +385,7 @@ wss.on('connection', (ws) => {
                     
                     db.all(`SELECT * FROM messages WHERE room_id = ? ORDER BY created_at ASC LIMIT 100`,
                         [currentRoom], (err, messages) => {
-                        ws.send(JSON.stringify({ type: 'history', messages }));
+                        ws.send(JSON.stringify({ type: 'history', messages: messages || [] }));
                     });
                     break;
                 }
