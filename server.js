@@ -2,7 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const WebSocket = require('ws');
-const sqlite3 = require('sqlite3').verbose();
+const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
@@ -19,6 +19,12 @@ app.use('/uploads', express.static('uploads'));
 
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
 
+// Настройка PostgreSQL
+const pool = new Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
+
 const storage = multer.diskStorage({
     destination: 'uploads/',
     filename: (req, file, cb) => {
@@ -28,60 +34,85 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage: storage, limits: { fileSize: 10 * 1024 * 1024 } });
 
-const db = new sqlite3.Database('database.sqlite');
+// Создание таблиц
+async function initDatabase() {
+    const client = await pool.connect();
+    try {
+        // Пользователи
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL,
+                avatar TEXT,
+                online BOOLEAN DEFAULT false,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        // Друзья
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS friends (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                friend_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, friend_id)
+            )
+        `);
+        
+        // Комнаты
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS rooms (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                type TEXT DEFAULT 'public',
+                created_by INTEGER REFERENCES users(id),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        // Участники комнат
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS room_members (
+                room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(room_id, user_id)
+            )
+        `);
+        
+        // Сообщения
+        await client.query(`
+            CREATE TABLE IF NOT EXISTS messages (
+                id SERIAL PRIMARY KEY,
+                room_id INTEGER REFERENCES rooms(id) ON DELETE CASCADE,
+                user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                username TEXT,
+                message TEXT,
+                file_url TEXT,
+                file_type TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        `);
+        
+        // Создаем общий чат если его нет
+        const roomCheck = await client.query(`SELECT id FROM rooms WHERE id = 1`);
+        if (roomCheck.rows.length === 0) {
+            await client.query(`INSERT INTO rooms (id, name, type, created_by) VALUES (1, 'Общий чат', 'public', 1)`);
+        }
+        
+        console.log('✅ База данных инициализирована');
+    } catch (err) {
+        console.error('Database init error:', err);
+    } finally {
+        client.release();
+    }
+}
 
-db.serialize(() => {
-    db.run(`CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE,
-        password TEXT,
-        avatar TEXT,
-        online BOOLEAN DEFAULT 0,
-        last_seen DATETIME,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    
-    db.run(`CREATE TABLE IF NOT EXISTS friends (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        friend_id INTEGER,
-        status TEXT DEFAULT 'pending',
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(user_id) REFERENCES users(id),
-        FOREIGN KEY(friend_id) REFERENCES users(id),
-        UNIQUE(user_id, friend_id)
-    )`);
-    
-    db.run(`CREATE TABLE IF NOT EXISTS rooms (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT,
-        type TEXT DEFAULT 'public',
-        created_by INTEGER,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    
-    db.run(`CREATE TABLE IF NOT EXISTS room_members (
-        room_id INTEGER,
-        user_id INTEGER,
-        joined_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY(room_id) REFERENCES rooms(id),
-        FOREIGN KEY(user_id) REFERENCES users(id),
-        UNIQUE(room_id, user_id)
-    )`);
-    
-    db.run(`CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        room_id INTEGER,
-        user_id INTEGER,
-        username TEXT,
-        message TEXT,
-        file_url TEXT,
-        file_type TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )`);
-    
-    db.run(`INSERT OR IGNORE INTO rooms (id, name, type, created_by) VALUES (1, 'Общий чат', 'public', 1)`);
-});
+initDatabase();
 
 const clients = new Map();
 const roomConnections = new Map();
@@ -100,202 +131,255 @@ function authenticateToken(req, res, next) {
 app.post('/api/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Username and password required' });
-    const hashedPassword = await bcrypt.hash(password, 10);
-    db.run(`INSERT INTO users (username, password) VALUES (?, ?)`, [username, hashedPassword], function(err) {
-        if (err) return res.status(400).json({ error: 'Username already exists' });
-        const token = jwt.sign({ id: this.lastID, username }, process.env.JWT_SECRET);
-        res.json({ token, userId: this.lastID, username });
-    });
+    
+    try {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const result = await pool.query(
+            `INSERT INTO users (username, password) VALUES ($1, $2) RETURNING id, username`,
+            [username, hashedPassword]
+        );
+        const user = result.rows[0];
+        const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET);
+        res.json({ token, userId: user.id, username: user.username });
+    } catch (err) {
+        if (err.code === '23505') {
+            res.status(400).json({ error: 'Username already exists' });
+        } else {
+            res.status(500).json({ error: 'Registration failed' });
+        }
+    }
 });
 
 app.post('/api/login', async (req, res) => {
     const { username, password } = req.body;
-    db.get(`SELECT * FROM users WHERE username = ?`, [username], async (err, user) => {
-        if (err || !user) return res.status(400).json({ error: 'User not found' });
+    try {
+        const result = await pool.query(`SELECT * FROM users WHERE username = $1`, [username]);
+        if (result.rows.length === 0) {
+            return res.status(400).json({ error: 'User not found' });
+        }
+        const user = result.rows[0];
         const valid = await bcrypt.compare(password, user.password);
         if (!valid) return res.status(400).json({ error: 'Invalid password' });
-        db.run(`UPDATE users SET online = 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, [user.id]);
+        
+        await pool.query(`UPDATE users SET online = true, last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [user.id]);
+        
         const token = jwt.sign({ id: user.id, username: user.username }, process.env.JWT_SECRET);
         res.json({ token, userId: user.id, username: user.username });
-    });
+    } catch (err) {
+        res.status(500).json({ error: 'Login failed' });
+    }
 });
 
-app.get('/api/users/search', authenticateToken, (req, res) => {
+app.get('/api/users/search', authenticateToken, async (req, res) => {
     const { q } = req.query;
-    db.all(`SELECT id, username FROM users WHERE username LIKE ? AND id != ? LIMIT 10`, [`%${q}%`, req.user.id], (err, users) => {
-        res.json(users || []);
-    });
+    try {
+        const result = await pool.query(
+            `SELECT id, username FROM users WHERE username LIKE $1 AND id != $2 LIMIT 10`,
+            [`%${q}%`, req.user.id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        res.json([]);
+    }
 });
 
-app.get('/api/friends/requests', authenticateToken, (req, res) => {
-    db.all(`
-        SELECT u.id, u.username, u.online, f.id as request_id
-        FROM friends f
-        JOIN users u ON u.id = f.user_id
-        WHERE f.friend_id = ? AND f.status = 'pending'
-    `, [req.user.id], (err, requests) => {
-        res.json(requests || []);
-    });
+app.get('/api/friends/requests', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT u.id, u.username, u.online, f.id as request_id
+            FROM friends f
+            JOIN users u ON u.id = f.user_id
+            WHERE f.friend_id = $1 AND f.status = 'pending'
+        `, [req.user.id]);
+        res.json(result.rows);
+    } catch (err) {
+        res.json([]);
+    }
 });
 
-app.get('/api/friends', authenticateToken, (req, res) => {
-    db.all(`
-        SELECT DISTINCT u.id, u.username, u.online, f.status 
-        FROM friends f
-        JOIN users u ON (u.id = f.friend_id OR u.id = f.user_id)
-        WHERE (f.user_id = ? OR f.friend_id = ?) 
-        AND u.id != ?
-        AND f.status = 'accepted'
-    `, [req.user.id, req.user.id, req.user.id], (err, friends) => {
-        res.json(friends || []);
-    });
+app.get('/api/friends', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT DISTINCT u.id, u.username, u.online, f.status 
+            FROM friends f
+            JOIN users u ON (u.id = f.friend_id OR u.id = f.user_id)
+            WHERE (f.user_id = $1 OR f.friend_id = $1) 
+            AND u.id != $1
+            AND f.status = 'accepted'
+        `, [req.user.id]);
+        res.json(result.rows);
+    } catch (err) {
+        res.json([]);
+    }
 });
 
-app.post('/api/friends/add', authenticateToken, (req, res) => {
+app.post('/api/friends/add', authenticateToken, async (req, res) => {
     const { friendUsername } = req.body;
-    db.get(`SELECT id FROM users WHERE username = ?`, [friendUsername], (err, user) => {
-        if (err || !user) return res.status(404).json({ error: 'User not found' });
-        if (user.id === req.user.id) return res.status(400).json({ error: 'Cannot add yourself' });
-        db.get(`SELECT * FROM friends WHERE (user_id = ? AND friend_id = ?) OR (user_id = ? AND friend_id = ?)`,
-            [req.user.id, user.id, user.id, req.user.id], (err, existing) => {
-            if (existing) {
-                if (existing.status === 'pending') return res.status(400).json({ error: 'Friend request already sent' });
-                if (existing.status === 'accepted') return res.status(400).json({ error: 'Already friends' });
-            }
-            db.run(`INSERT INTO friends (user_id, friend_id, status) VALUES (?, ?, 'pending')`, [req.user.id, user.id], function(err) {
-                if (err) return res.status(400).json({ error: 'Error sending friend request' });
-                const targetSocket = clients.get(user.id);
-                if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
-                    targetSocket.send(JSON.stringify({
-                        type: 'friend_request',
-                        from: { id: req.user.id, username: req.user.username }
-                    }));
-                }
-                res.json({ success: true, message: 'Friend request sent' });
-            });
-        });
-    });
-});
-
-app.post('/api/friends/accept', authenticateToken, (req, res) => {
-    const { requestId } = req.body;
-    db.run(`UPDATE friends SET status = 'accepted' WHERE id = ? AND friend_id = ?`, [requestId, req.user.id], function(err) {
-        if (err || this.changes === 0) return res.status(400).json({ error: 'Failed to accept request' });
-        db.get(`SELECT u.id, u.username FROM friends f JOIN users u ON u.id = f.user_id WHERE f.id = ?`, [requestId], (err, friend) => {
-            if (friend) {
-                const senderSocket = clients.get(friend.id);
-                if (senderSocket && senderSocket.readyState === WebSocket.OPEN) {
-                    senderSocket.send(JSON.stringify({
-                        type: 'friend_accepted',
-                        by: { id: req.user.id, username: req.user.username }
-                    }));
-                }
-            }
-        });
-        res.json({ success: true, message: 'Friend request accepted' });
-    });
-});
-
-app.post('/api/friends/reject', authenticateToken, (req, res) => {
-    const { requestId } = req.body;
-    db.run(`DELETE FROM friends WHERE id = ? AND friend_id = ?`, [requestId, req.user.id], function(err) {
-        if (err || this.changes === 0) return res.status(400).json({ error: 'Failed to reject request' });
-        res.json({ success: true, message: 'Friend request rejected' });
-    });
-});
-
-// ПОЛУЧЕНИЕ КОМНАТ С ИМЕНАМИ ДЛЯ ЛИЧНЫХ ЧАТОВ
-app.get('/api/rooms', authenticateToken, (req, res) => {
-    db.all(`
-        SELECT DISTINCT r.* FROM rooms r
-        LEFT JOIN room_members rm ON rm.room_id = r.id
-        WHERE rm.user_id = ? OR r.type = 'public'
-        ORDER BY r.created_at DESC
-    `, [req.user.id], (err, rooms) => {
-        if (err) return res.json([]);
+    try {
+        const userResult = await pool.query(`SELECT id FROM users WHERE username = $1`, [friendUsername]);
+        if (userResult.rows.length === 0) return res.status(404).json({ error: 'User not found' });
+        const friendId = userResult.rows[0].id;
+        if (friendId === req.user.id) return res.status(400).json({ error: 'Cannot add yourself' });
         
-        // Для каждой комнаты типа direct получаем имя собеседника
-        const processRooms = async () => {
-            const enrichedRooms = [];
-            for (const room of rooms) {
-                if (room.type === 'direct') {
-                    // Получаем другого участника комнаты
-                    const otherMember = await new Promise((resolve) => {
-                        db.get(`
-                            SELECT u.username FROM room_members rm
-                            JOIN users u ON u.id = rm.user_id
-                            WHERE rm.room_id = ? AND rm.user_id != ?
-                        `, [room.id, req.user.id], (err, member) => {
-                            resolve(member);
-                        });
-                    });
-                    enrichedRooms.push({
-                        ...room,
-                        displayName: otherMember ? otherMember.username : room.name
-                    });
-                } else {
-                    enrichedRooms.push({
-                        ...room,
-                        displayName: room.name
-                    });
-                }
-            }
-            res.json(enrichedRooms);
-        };
-        processRooms();
-    });
-});
-
-app.post('/api/rooms/private', authenticateToken, (req, res) => {
-    const { name, members } = req.body;
-    db.run(`INSERT INTO rooms (name, type, created_by) VALUES (?, 'private', ?)`, [name, req.user.id], function(err) {
-        if (err) return res.status(400).json({ error: 'Error creating room' });
-        const roomId = this.lastID;
-        // Добавляем создателя
-        db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, req.user.id]);
-        // Добавляем всех участников
-        members.forEach(memberId => {
-            db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, memberId]);
-        });
-        res.json({ id: roomId, name, type: 'private' });
-    });
-});
-
-app.post('/api/rooms/direct', authenticateToken, (req, res) => {
-    const { friendId } = req.body;
-    db.get(`
-        SELECT r.id, r.name FROM rooms r
-        JOIN room_members rm1 ON rm1.room_id = r.id AND rm1.user_id = ?
-        JOIN room_members rm2 ON rm2.room_id = r.id AND rm2.user_id = ?
-        WHERE r.type = 'direct'
-    `, [req.user.id, friendId], (err, existing) => {
-        if (existing) {
-            return res.json({ id: existing.id, name: existing.name, type: 'direct', existing: true });
+        const existing = await pool.query(
+            `SELECT * FROM friends WHERE (user_id = $1 AND friend_id = $2) OR (user_id = $2 AND friend_id = $1)`,
+            [req.user.id, friendId]
+        );
+        if (existing.rows.length > 0) {
+            if (existing.rows[0].status === 'pending') return res.status(400).json({ error: 'Friend request already sent' });
+            if (existing.rows[0].status === 'accepted') return res.status(400).json({ error: 'Already friends' });
         }
-        // Создаем новый личный чат, имя будет установлено позже
-        db.run(`INSERT INTO rooms (name, type, created_by) VALUES (?, 'direct', ?)`, ['temp', req.user.id], function(err) {
-            if (err) return res.status(400).json({ error: 'Error creating direct chat' });
-            const roomId = this.lastID;
-            db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, req.user.id]);
-            db.run(`INSERT INTO room_members (room_id, user_id) VALUES (?, ?)`, [roomId, friendId]);
-            
-            // Получаем имя друга для ответа
-            db.get(`SELECT username FROM users WHERE id = ?`, [friendId], (err, friend) => {
-                const friendName = friend ? friend.username : 'Чат';
-                // Обновляем имя комнаты
-                db.run(`UPDATE rooms SET name = ? WHERE id = ?`, [friendName, roomId]);
-                res.json({ id: roomId, name: friendName, type: 'direct' });
-            });
-        });
-    });
+        
+        await pool.query(
+            `INSERT INTO friends (user_id, friend_id, status) VALUES ($1, $2, 'pending')`,
+            [req.user.id, friendId]
+        );
+        
+        const targetSocket = clients.get(friendId);
+        if (targetSocket && targetSocket.readyState === WebSocket.OPEN) {
+            targetSocket.send(JSON.stringify({
+                type: 'friend_request',
+                from: { id: req.user.id, username: req.user.username }
+            }));
+        }
+        res.json({ success: true, message: 'Friend request sent' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to send friend request' });
+    }
 });
 
-app.get('/api/messages/:roomId', authenticateToken, (req, res) => {
+app.post('/api/friends/accept', authenticateToken, async (req, res) => {
+    const { requestId } = req.body;
+    try {
+        const result = await pool.query(
+            `UPDATE friends SET status = 'accepted' WHERE id = $1 AND friend_id = $2 RETURNING user_id`,
+            [requestId, req.user.id]
+        );
+        if (result.rows.length === 0) return res.status(400).json({ error: 'Failed to accept request' });
+        
+        const friendResult = await pool.query(
+            `SELECT u.id, u.username FROM friends f JOIN users u ON u.id = f.user_id WHERE f.id = $1`,
+            [requestId]
+        );
+        if (friendResult.rows.length > 0) {
+            const senderSocket = clients.get(friendResult.rows[0].id);
+            if (senderSocket && senderSocket.readyState === WebSocket.OPEN) {
+                senderSocket.send(JSON.stringify({
+                    type: 'friend_accepted',
+                    by: { id: req.user.id, username: req.user.username }
+                }));
+            }
+        }
+        res.json({ success: true, message: 'Friend request accepted' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to accept' });
+    }
+});
+
+app.post('/api/friends/reject', authenticateToken, async (req, res) => {
+    const { requestId } = req.body;
+    try {
+        await pool.query(`DELETE FROM friends WHERE id = $1 AND friend_id = $2`, [requestId, req.user.id]);
+        res.json({ success: true, message: 'Friend request rejected' });
+    } catch (err) {
+        res.status(500).json({ error: 'Failed to reject' });
+    }
+});
+
+app.get('/api/rooms', authenticateToken, async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT DISTINCT r.* FROM rooms r
+            LEFT JOIN room_members rm ON rm.room_id = r.id
+            WHERE rm.user_id = $1 OR r.type = 'public'
+            ORDER BY r.created_at DESC
+        `, [req.user.id]);
+        
+        const enrichedRooms = [];
+        for (const room of result.rows) {
+            if (room.type === 'direct') {
+                const otherMember = await pool.query(`
+                    SELECT u.username FROM room_members rm
+                    JOIN users u ON u.id = rm.user_id
+                    WHERE rm.room_id = $1 AND rm.user_id != $2
+                `, [room.id, req.user.id]);
+                enrichedRooms.push({
+                    ...room,
+                    displayName: otherMember.rows[0]?.username || room.name
+                });
+            } else {
+                enrichedRooms.push({ ...room, displayName: room.name });
+            }
+        }
+        res.json(enrichedRooms);
+    } catch (err) {
+        res.json([]);
+    }
+});
+
+app.post('/api/rooms/private', authenticateToken, async (req, res) => {
+    const { name, members } = req.body;
+    try {
+        const roomResult = await pool.query(
+            `INSERT INTO rooms (name, type, created_by) VALUES ($1, 'private', $2) RETURNING id`,
+            [name, req.user.id]
+        );
+        const roomId = roomResult.rows[0].id;
+        
+        await pool.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [roomId, req.user.id]);
+        for (const memberId of members) {
+            await pool.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [roomId, memberId]);
+        }
+        res.json({ id: roomId, name, type: 'private' });
+    } catch (err) {
+        res.status(500).json({ error: 'Error creating room' });
+    }
+});
+
+app.post('/api/rooms/direct', authenticateToken, async (req, res) => {
+    const { friendId } = req.body;
+    try {
+        const existing = await pool.query(`
+            SELECT r.id, r.name FROM rooms r
+            JOIN room_members rm1 ON rm1.room_id = r.id AND rm1.user_id = $1
+            JOIN room_members rm2 ON rm2.room_id = r.id AND rm2.user_id = $2
+            WHERE r.type = 'direct'
+        `, [req.user.id, friendId]);
+        
+        if (existing.rows.length > 0) {
+            return res.json({ id: existing.rows[0].id, name: existing.rows[0].name, type: 'direct', existing: true });
+        }
+        
+        const friendResult = await pool.query(`SELECT username FROM users WHERE id = $1`, [friendId]);
+        const friendName = friendResult.rows[0]?.username || 'Чат';
+        
+        const roomResult = await pool.query(
+            `INSERT INTO rooms (name, type, created_by) VALUES ($1, 'direct', $2) RETURNING id`,
+            [friendName, req.user.id]
+        );
+        const roomId = roomResult.rows[0].id;
+        
+        await pool.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [roomId, req.user.id]);
+        await pool.query(`INSERT INTO room_members (room_id, user_id) VALUES ($1, $2)`, [roomId, friendId]);
+        
+        res.json({ id: roomId, name: friendName, type: 'direct' });
+    } catch (err) {
+        res.status(500).json({ error: 'Error creating direct chat' });
+    }
+});
+
+app.get('/api/messages/:roomId', authenticateToken, async (req, res) => {
     const { roomId } = req.params;
     const { limit = 100 } = req.query;
-    db.all(`SELECT * FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ?`, [roomId, limit], (err, messages) => {
-        res.json(messages.reverse() || []);
-    });
+    try {
+        const result = await pool.query(
+            `SELECT * FROM messages WHERE room_id = $1 ORDER BY created_at DESC LIMIT $2`,
+            [roomId, limit]
+        );
+        res.json(result.rows.reverse());
+    } catch (err) {
+        res.json([]);
+    }
 });
 
 app.post('/api/upload', authenticateToken, upload.single('file'), (req, res) => {
@@ -318,82 +402,111 @@ wss.on('connection', (ws) => {
                     const decoded = jwt.verify(parsed.token, process.env.JWT_SECRET);
                     currentUser = { id: decoded.id, username: decoded.username };
                     clients.set(currentUser.id, ws);
-                    db.run(`UPDATE users SET online = 1, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, [currentUser.id]);
+                    await pool.query(`UPDATE users SET online = true, last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [currentUser.id]);
                     
-                    // Отправляем список комнат с правильными именами
-                    const rooms = await new Promise((resolve) => {
-                        db.all(`
-                            SELECT DISTINCT r.* FROM rooms r
-                            LEFT JOIN room_members rm ON rm.room_id = r.id
-                            WHERE rm.user_id = ? OR r.type = 'public'
-                            ORDER BY r.created_at DESC
-                        `, [currentUser.id], async (err, rooms) => {
-                            const enriched = [];
-                            for (const room of rooms || []) {
-                                if (room.type === 'direct') {
-                                    const otherMember = await new Promise((res) => {
-                                        db.get(`SELECT u.username FROM room_members rm JOIN users u ON u.id = rm.user_id WHERE rm.room_id = ? AND rm.user_id != ?`, [room.id, currentUser.id], (err, member) => res(member));
-                                    });
-                                    enriched.push({ ...room, displayName: otherMember ? otherMember.username : room.name });
-                                } else {
-                                    enriched.push({ ...room, displayName: room.name });
-                                }
-                            }
-                            resolve(enriched);
-                        });
-                    });
+                    // Получаем комнаты
+                    const roomsResult = await pool.query(`
+                        SELECT DISTINCT r.* FROM rooms r
+                        LEFT JOIN room_members rm ON rm.room_id = r.id
+                        WHERE rm.user_id = $1 OR r.type = 'public'
+                        ORDER BY r.created_at DESC
+                    `, [currentUser.id]);
+                    
+                    const rooms = [];
+                    for (const room of roomsResult.rows) {
+                        if (room.type === 'direct') {
+                            const otherMember = await pool.query(`
+                                SELECT u.username FROM room_members rm
+                                JOIN users u ON u.id = rm.user_id
+                                WHERE rm.room_id = $1 AND rm.user_id != $2
+                            `, [room.id, currentUser.id]);
+                            rooms.push({ ...room, displayName: otherMember.rows[0]?.username || room.name });
+                        } else {
+                            rooms.push({ ...room, displayName: room.name });
+                        }
+                    }
                     ws.send(JSON.stringify({ type: 'rooms_list', rooms }));
                     
-                    // Отправляем список друзей
-                    const friends = await new Promise((resolve) => {
-                        db.all(`SELECT DISTINCT u.id, u.username, u.online FROM friends f JOIN users u ON (u.id = f.friend_id OR u.id = f.user_id) WHERE (f.user_id = ? OR f.friend_id = ?) AND u.id != ? AND f.status = 'accepted'`, [currentUser.id, currentUser.id, currentUser.id], (err, friends) => resolve(friends || []));
-                    });
-                    ws.send(JSON.stringify({ type: 'friends_list', friends }));
+                    // Друзья
+                    const friendsResult = await pool.query(`
+                        SELECT DISTINCT u.id, u.username, u.online FROM friends f
+                        JOIN users u ON (u.id = f.friend_id OR u.id = f.user_id)
+                        WHERE (f.user_id = $1 OR f.friend_id = $1) AND u.id != $1 AND f.status = 'accepted'
+                    `, [currentUser.id]);
+                    ws.send(JSON.stringify({ type: 'friends_list', friends: friendsResult.rows }));
                     
-                    // Отправляем запросы в друзья
-                    const requests = await new Promise((resolve) => {
-                        db.all(`SELECT u.id, u.username, u.online, f.id as request_id FROM friends f JOIN users u ON u.id = f.user_id WHERE f.friend_id = ? AND f.status = 'pending'`, [currentUser.id], (err, requests) => resolve(requests || []));
-                    });
-                    ws.send(JSON.stringify({ type: 'friend_requests', requests }));
+                    // Запросы
+                    const requestsResult = await pool.query(`
+                        SELECT u.id, u.username, u.online, f.id as request_id
+                        FROM friends f JOIN users u ON u.id = f.user_id
+                        WHERE f.friend_id = $1 AND f.status = 'pending'
+                    `, [currentUser.id]);
+                    ws.send(JSON.stringify({ type: 'friend_requests', requests: requestsResult.rows }));
                     break;
                 }
                 case 'join_room': {
                     currentRoom = parsed.roomId;
                     if (!roomConnections.has(currentRoom)) roomConnections.set(currentRoom, new Set());
                     roomConnections.get(currentRoom).add(currentUser.id);
-                    const messages = await new Promise((resolve) => {
-                        db.all(`SELECT * FROM messages WHERE room_id = ? ORDER BY created_at ASC LIMIT 100`, [currentRoom], (err, messages) => resolve(messages || []));
-                    });
-                    ws.send(JSON.stringify({ type: 'history', messages }));
+                    
+                    const messagesResult = await pool.query(
+                        `SELECT * FROM messages WHERE room_id = $1 ORDER BY created_at ASC LIMIT 100`,
+                        [currentRoom]
+                    );
+                    ws.send(JSON.stringify({ type: 'history', messages: messagesResult.rows }));
                     break;
                 }
                 case 'message': {
                     const { message, roomId } = parsed;
                     const targetRoom = roomId || currentRoom;
-                    db.run(`INSERT INTO messages (room_id, user_id, username, message) VALUES (?, ?, ?, ?)`, [targetRoom, currentUser.id, currentUser.username, message]);
-                    const messageData = { type: 'message', id: Date.now(), username: currentUser.username, userId: currentUser.id, message: message, timestamp: new Date().toISOString() };
+                    await pool.query(
+                        `INSERT INTO messages (room_id, user_id, username, message) VALUES ($1, $2, $3, $4)`,
+                        [targetRoom, currentUser.id, currentUser.username, message]
+                    );
+                    const messageData = {
+                        type: 'message',
+                        id: Date.now(),
+                        username: currentUser.username,
+                        userId: currentUser.id,
+                        message: message,
+                        timestamp: new Date().toISOString()
+                    };
                     broadcastToRoom(targetRoom, messageData);
                     break;
                 }
                 case 'file': {
                     const { fileUrl, fileType, originalName, roomId } = parsed;
-                    const targetRoomFile = roomId || currentRoom;
-                    db.run(`INSERT INTO messages (room_id, user_id, username, message, file_url, file_type) VALUES (?, ?, ?, ?, ?, ?)`, [targetRoomFile, currentUser.id, currentUser.username, originalName, fileUrl, fileType]);
-                    broadcastToRoom(targetRoomFile, { type: 'file', username: currentUser.username, fileUrl, fileType, originalName, timestamp: new Date().toISOString() });
+                    const targetRoom = roomId || currentRoom;
+                    await pool.query(
+                        `INSERT INTO messages (room_id, user_id, username, message, file_url, file_type) VALUES ($1, $2, $3, $4, $5, $6)`,
+                        [targetRoom, currentUser.id, currentUser.username, originalName, fileUrl, fileType]
+                    );
+                    broadcastToRoom(targetRoom, {
+                        type: 'file',
+                        username: currentUser.username,
+                        fileUrl: fileUrl,
+                        fileType: fileType,
+                        originalName: originalName,
+                        timestamp: new Date().toISOString()
+                    });
                     break;
                 }
                 case 'typing': {
-                    broadcastToRoom(currentRoom, { type: 'typing', username: currentUser.username, isTyping: parsed.isTyping });
+                    broadcastToRoom(currentRoom, {
+                        type: 'typing',
+                        username: currentUser.username,
+                        isTyping: parsed.isTyping
+                    });
                     break;
                 }
             }
         } catch(e) { console.error('WebSocket error:', e); }
     });
     
-    ws.on('close', () => {
+    ws.on('close', async () => {
         if (currentUser) {
             clients.delete(currentUser.id);
-            db.run(`UPDATE users SET online = 0, last_seen = CURRENT_TIMESTAMP WHERE id = ?`, [currentUser.id]);
+            await pool.query(`UPDATE users SET online = false, last_seen = CURRENT_TIMESTAMP WHERE id = $1`, [currentUser.id]);
             broadcastToRoom(currentRoom, { type: 'user_left', username: currentUser.username });
         }
     });
