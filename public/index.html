@@ -2,10 +2,491 @@
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
-    <title>Мессенджер - Приватные чаты</title>
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мессенджер</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        /* Экран входа */
+        .screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .auth-container {
+            background: white;
+            padding: 2rem;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            width: 90%;
+            max-width: 400px;
+        }
+
+        .auth-container h1 {
+            text-align: center;
+            margin-bottom: 2rem;
+            color: #4a6fa5;
+        }
+
+        .auth-tabs {
+            display: flex;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .tab-btn {
+            flex: 1;
+            padding: 0.75rem;
+            border: none;
+            background: #f0f0f0;
+            cursor: pointer;
+            border-radius: 10px;
+            transition: all 0.3s;
+            font-size: 1rem;
+        }
+
+        .tab-btn.active {
+            background: #4a6fa5;
+            color: white;
+        }
+
+        .auth-container input {
+            width: 100%;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            font-size: 1rem;
+        }
+
+        .auth-container button[type="submit"] {
+            width: 100%;
+            padding: 0.75rem;
+            background: #4a6fa5;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-size: 1rem;
+            transition: background 0.3s;
+        }
+
+        .auth-container button[type="submit"]:hover {
+            background: #3a5a8c;
+        }
+
+        .error-message {
+            color: red;
+            text-align: center;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+
+        /* Основной чат */
+        .app-container {
+            display: flex;
+            height: 100vh;
+            background: white;
+        }
+
+        .sidebar {
+            width: 280px;
+            background: #f8f9fa;
+            border-right: 1px solid #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .user-info {
+            padding: 1rem;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .avatar {
+            width: 40px;
+            height: 40px;
+            background: #4a6fa5;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .user-details {
+            flex: 1;
+        }
+
+        .user-details span {
+            font-weight: bold;
+            display: block;
+        }
+
+        .user-details small {
+            color: #4caf50;
+            font-size: 0.75rem;
+        }
+
+        .icon-btn {
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 1.2rem;
+            color: #666;
+            padding: 0.5rem;
+            border-radius: 50%;
+            transition: all 0.3s;
+        }
+
+        .icon-btn:hover {
+            background: #f0f0f0;
+        }
+
+        .create-buttons {
+            padding: 1rem;
+            display: flex;
+            gap: 0.5rem;
+            border-bottom: 1px solid #e0e0e0;
+        }
+
+        .create-btn {
+            flex: 1;
+            padding: 0.5rem;
+            background: #4a6fa5;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.85rem;
+        }
+
+        .create-btn:hover {
+            background: #3a5a8c;
+        }
+
+        .rooms-section, .friends-section {
+            padding: 1rem;
+        }
+
+        .rooms-section h3, .friends-section h3 {
+            font-size: 0.85rem;
+            color: #666;
+            margin-bottom: 0.75rem;
+        }
+
+        .rooms-list, .friends-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .room-item, .friend-item {
+            padding: 0.5rem;
+            cursor: pointer;
+            border-radius: 8px;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .room-item:hover, .friend-item:hover {
+            background: #e0e0e0;
+        }
+
+        .room-item.active {
+            background: #4a6fa5;
+            color: white;
+        }
+
+        .room-type {
+            font-size: 0.7rem;
+            opacity: 0.7;
+        }
+
+        .friend-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 0.5rem;
+        }
+
+        .friend-status.online {
+            background: #4caf50;
+        }
+
+        .friend-status.offline {
+            background: #9e9e9e;
+        }
+
+        .chat-main {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .chat-header {
+            padding: 1rem;
+            background: white;
+            border-bottom: 1px solid #e0e0e0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h2 {
+            font-size: 1.2rem;
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .messages-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 1rem;
+            background: #fafafa;
+        }
+
+        .messages {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .message {
+            max-width: 70%;
+            padding: 0.5rem 0.75rem;
+            border-radius: 12px;
+            animation: fadeIn 0.3s;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .message.own {
+            background: #4a6fa5;
+            color: white;
+            align-self: flex-end;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message.other {
+            background: white;
+            color: #333;
+            align-self: flex-start;
+            border-bottom-left-radius: 4px;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.1);
+        }
+
+        .message-header {
+            font-size: 0.7rem;
+            margin-bottom: 0.25rem;
+            opacity: 0.7;
+        }
+
+        .message-content {
+            word-wrap: break-word;
+        }
+
+        .message-image {
+            max-width: 200px;
+            max-height: 200px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .typing-indicator {
+            padding: 0.5rem 1rem;
+            font-size: 0.8rem;
+            color: #666;
+            font-style: italic;
+            min-height: 40px;
+        }
+
+        .input-area {
+            display: flex;
+            padding: 1rem;
+            background: white;
+            border-top: 1px solid #e0e0e0;
+            gap: 0.5rem;
+        }
+
+        .input-area input {
+            flex: 1;
+            padding: 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 1rem;
+        }
+
+        .input-area button {
+            padding: 0.75rem 1.5rem;
+            background: #4a6fa5;
+            color: white;
+            border: none;
+            border-radius: 25px;
+            cursor: pointer;
+        }
+
+        .emoji-picker {
+            position: fixed;
+            bottom: 80px;
+            right: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 0.5rem;
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 0.25rem;
+            max-width: 300px;
+            z-index: 1000;
+        }
+
+        .emoji-picker span {
+            font-size: 1.5rem;
+            cursor: pointer;
+            padding: 0.25rem;
+            text-align: center;
+        }
+
+        .emoji-picker span:hover {
+            transform: scale(1.2);
+        }
+
+        /* Модальные окна */
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+
+        .modal-content {
+            background: white;
+            padding: 2rem;
+            border-radius: 20px;
+            width: 90%;
+            max-width: 500px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-content h3, .modal-content h4 {
+            margin-bottom: 1rem;
+        }
+
+        .modal-content input {
+            width: 100%;
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+        }
+
+        .close {
+            float: right;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .friends-select {
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+        }
+
+        .friend-checkbox {
+            display: flex;
+            align-items: center;
+            padding: 0.5rem;
+            cursor: pointer;
+        }
+
+        .friend-checkbox input {
+            width: auto;
+            margin-right: 0.5rem;
+        }
+
+        .search-results {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .search-result-item {
+            padding: 0.5rem;
+            cursor: pointer;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .search-result-item:hover {
+            background: #f0f0f0;
+        }
+
+        .search-result-item button {
+            padding: 0.25rem 0.5rem;
+            background: #4a6fa5;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        @media (max-width: 768px) {
+            .sidebar {
+                position: fixed;
+                left: -280px;
+                top: 0;
+                height: 100vh;
+                z-index: 1000;
+                transition: left 0.3s;
+            }
+            
+            .message {
+                max-width: 85%;
+            }
+        }
+    </style>
 </head>
 <body>
     <div id="loginScreen" class="screen">
@@ -19,11 +500,13 @@
                 <input type="text" id="loginUsername" placeholder="Имя пользователя" required>
                 <input type="password" id="loginPassword" placeholder="Пароль" required>
                 <button type="submit">Войти</button>
+                <div id="loginError" class="error-message"></div>
             </form>
             <form id="registerForm" style="display:none">
                 <input type="text" id="regUsername" placeholder="Имя пользователя" required>
                 <input type="password" id="regPassword" placeholder="Пароль" required>
                 <button type="submit">Зарегистрироваться</button>
+                <div id="regError" class="error-message"></div>
             </form>
         </div>
     </div>
@@ -35,24 +518,21 @@
                     <div class="avatar" id="userAvatar">👤</div>
                     <div class="user-details">
                         <span id="currentUsername"></span>
-                        <small id="onlineStatus"></small>
+                        <small id="onlineStatus">🟢 Онлайн</small>
                     </div>
                     <button id="logoutBtn" class="icon-btn"><i class="fas fa-sign-out-alt"></i></button>
                 </div>
                 
-                <!-- Кнопки для создания чатов -->
                 <div class="create-buttons">
                     <button id="createGroupBtn" class="create-btn"><i class="fas fa-users"></i> Создать группу</button>
                     <button id="createDirectBtn" class="create-btn"><i class="fas fa-user-plus"></i> Новый чат</button>
                 </div>
                 
-                <!-- Список комнат -->
                 <div class="rooms-section">
                     <h3><i class="fas fa-comments"></i> Чаты</h3>
                     <div id="roomsList" class="rooms-list"></div>
                 </div>
                 
-                <!-- Список друзей -->
                 <div class="friends-section">
                     <h3><i class="fas fa-user-friends"></i> Друзья</h3>
                     <div id="friendsList" class="friends-list"></div>
@@ -65,11 +545,10 @@
                     <div class="chat-actions">
                         <button id="emojiBtn" class="icon-btn"><i class="fas fa-smile"></i></button>
                         <button id="fileBtn" class="icon-btn"><i class="fas fa-paperclip"></i></button>
-                        <button id="infoBtn" class="icon-btn"><i class="fas fa-info-circle"></i></button>
                     </div>
                 </div>
                 
-                <div class="messages-area" id="messagesArea">
+                <div class="messages-area">
                     <div class="messages" id="messages"></div>
                 </div>
                 
@@ -90,7 +569,6 @@
     <div id="emojiPicker" class="emoji-picker" style="display:none"></div>
     <input type="file" id="fileInput" style="display:none" accept="image/*,video/*,application/pdf">
     
-    <!-- Модальные окна -->
     <div id="createGroupModal" class="modal" style="display:none">
         <div class="modal-content">
             <span class="close">&times;</span>
@@ -106,11 +584,557 @@
         <div class="modal-content">
             <span class="close">&times;</span>
             <h3>Новый личный чат</h3>
-            <input type="text" id="searchUser" placeholder="Поиск по имени пользователя">
+            <input type="text" id="searchUser" placeholder="Поиск пользователей...">
             <div id="searchResults" class="search-results"></div>
         </div>
     </div>
 
-    <script src="client.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+    <script>
+        let socket;
+        let currentUser = null;
+        let currentRoom = 1;
+        let currentToken = null;
+        let typingTimeout = null;
+        let isTyping = false;
+
+        const emojis = ['😀', '😂', '😍', '😎', '😢', '😡', '👍', '❤️', '🔥', '🎉', '✨', '💀', '🐱', '🍕', '⚽', '🎮'];
+
+        // DOM элементы
+        const loginScreen = document.getElementById('loginScreen');
+        const chatScreen = document.getElementById('chatScreen');
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const currentUsernameSpan = document.getElementById('currentUsername');
+        const onlineStatusSpan = document.getElementById('onlineStatus');
+        const roomsList = document.getElementById('roomsList');
+        const friendsList = document.getElementById('friendsList');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const emojiBtn = document.getElementById('emojiBtn');
+        const emojiPicker = document.getElementById('emojiPicker');
+        const fileBtn = document.getElementById('fileBtn');
+        const fileInput = document.getElementById('fileInput');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const createGroupBtn = document.getElementById('createGroupBtn');
+        const createDirectBtn = document.getElementById('createDirectBtn');
+
+        let rooms = [];
+        let friends = [];
+
+        // Переключение табов
+        document.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                const tab = btn.dataset.tab;
+                document.getElementById('loginForm').style.display = tab === 'login' ? 'block' : 'none';
+                document.getElementById('registerForm').style.display = tab === 'register' ? 'block' : 'none';
+                document.getElementById('loginError').textContent = '';
+                document.getElementById('regError').textContent = '';
+            });
+        });
+
+        // Регистрация
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('regUsername').value;
+            const password = document.getElementById('regPassword').value;
+            
+            try {
+                const res = await fetch('/api/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    alert('Регистрация успешна! Теперь войдите.');
+                    document.querySelector('.tab-btn[data-tab="login"]').click();
+                    document.getElementById('loginUsername').value = username;
+                    document.getElementById('loginPassword').value = '';
+                } else {
+                    document.getElementById('regError').textContent = data.error || 'Ошибка регистрации';
+                }
+            } catch(err) {
+                document.getElementById('regError').textContent = 'Ошибка соединения с сервером';
+            }
+        });
+
+        // Вход
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            try {
+                const res = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await res.json();
+                
+                if (res.ok) {
+                    currentToken = data.token;
+                    currentUser = { id: data.userId, username: data.username };
+                    initChat();
+                } else {
+                    document.getElementById('loginError').textContent = data.error || 'Неверный логин или пароль';
+                }
+            } catch(err) {
+                document.getElementById('loginError').textContent = 'Ошибка соединения с сервером';
+            }
+        });
+
+        async function initChat() {
+            loginScreen.style.display = 'none';
+            chatScreen.style.display = 'flex';
+            currentUsernameSpan.textContent = currentUser.username;
+            
+            await loadFriends();
+            connectWebSocket();
+        }
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            socket = new WebSocket(`${protocol}//${window.location.host}`);
+            
+            socket.onopen = () => {
+                socket.send(JSON.stringify({ type: 'auth', token: currentToken }));
+                onlineStatusSpan.innerHTML = '🟢 Онлайн';
+            };
+            
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleSocketMessage(data);
+            };
+            
+            socket.onclose = () => {
+                onlineStatusSpan.innerHTML = '🔴 Офлайн';
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function handleSocketMessage(data) {
+            switch(data.type) {
+                case 'rooms_list':
+                    rooms = data.rooms;
+                    renderRooms();
+                    break;
+                case 'friends_list':
+                    friends = data.friends;
+                    renderFriends();
+                    break;
+                case 'message':
+                    addMessageToChat(data, data.username === currentUser.username);
+                    if (data.username !== currentUser.username) playNotification();
+                    break;
+                case 'file':
+                    addFileToChat(data, data.username === currentUser.username);
+                    break;
+                case 'history':
+                    messagesDiv.innerHTML = '';
+                    data.messages.forEach(msg => {
+                        addMessageToChat(msg, msg.username === currentUser.username, false);
+                    });
+                    break;
+                case 'typing':
+                    if (data.isTyping && data.username !== currentUser.username) {
+                        typingIndicator.textContent = `${data.username} печатает...`;
+                    } else if (!data.isTyping) {
+                        typingIndicator.textContent = '';
+                    }
+                    break;
+                case 'user_left':
+                    addSystemMessage(`${data.username} покинул чат`);
+                    break;
+            }
+        }
+
+        async function loadFriends() {
+            try {
+                const res = await fetch('/api/friends', {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                if (res.ok) {
+                    friends = await res.json();
+                    renderFriends();
+                }
+            } catch(e) {
+                console.error('Error loading friends:', e);
+            }
+        }
+
+        async function loadRooms() {
+            try {
+                const res = await fetch('/api/rooms', {
+                    headers: { 'Authorization': `Bearer ${currentToken}` }
+                });
+                if (res.ok) {
+                    rooms = await res.json();
+                    renderRooms();
+                }
+            } catch(e) {
+                console.error('Error loading rooms:', e);
+            }
+        }
+
+        function renderRooms() {
+            roomsList.innerHTML = '';
+            rooms.forEach(room => {
+                const roomDiv = document.createElement('div');
+                roomDiv.className = `room-item ${room.id === currentRoom ? 'active' : ''}`;
+                
+                let icon = room.type === 'public' ? 'fa-hashtag' : (room.type === 'direct' ? 'fa-user' : 'fa-users');
+                let typeLabel = room.type === 'public' ? 'Публичный' : (room.type === 'direct' ? 'Личный' : 'Группа');
+                
+                roomDiv.innerHTML = `
+                    <div style="flex:1">
+                        <i class="fas ${icon}"></i> ${room.name}
+                        <div class="room-type">${typeLabel}</div>
+                    </div>
+                `;
+                
+                roomDiv.onclick = () => switchRoom(room.id, room.name, room.type);
+                roomsList.appendChild(roomDiv);
+            });
+        }
+
+        function renderFriends() {
+            friendsList.innerHTML = '';
+            friends.forEach(friend => {
+                const friendDiv = document.createElement('div');
+                friendDiv.className = 'friend-item';
+                friendDiv.innerHTML = `
+                    <div>
+                        <span class="friend-status ${friend.online ? 'online' : 'offline'}"></span>
+                        ${friend.username}
+                    </div>
+                    <button class="icon-btn chat-with-friend" data-id="${friend.id}">
+                        <i class="fas fa-comment"></i>
+                    </button>
+                `;
+                
+                friendDiv.querySelector('.chat-with-friend').onclick = (e) => {
+                    e.stopPropagation();
+                    startDirectChat(friend.id);
+                };
+                
+                friendsList.appendChild(friendDiv);
+            });
+        }
+
+        async function startDirectChat(friendId) {
+            try {
+                const res = await fetch('/api/rooms/direct', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ friendId })
+                });
+                
+                if (res.ok) {
+                    const room = await res.json();
+                    await loadRooms();
+                    switchRoom(room.id, 'Личный чат', 'direct');
+                }
+            } catch(e) {
+                console.error('Error starting direct chat:', e);
+            }
+        }
+
+        function switchRoom(roomId, roomName, roomType) {
+            currentRoom = roomId;
+            document.getElementById('currentRoomName').textContent = roomName;
+            socket.send(JSON.stringify({ type: 'join_room', roomId: roomId }));
+            
+            document.querySelectorAll('.room-item').forEach(item => {
+                item.classList.remove('active');
+            });
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+            
+            socket.send(JSON.stringify({
+                type: 'message',
+                message: message,
+                roomId: currentRoom
+            }));
+            
+            messageInput.value = '';
+            stopTyping();
+        }
+
+        async function sendFile() {
+            const file = fileInput.files[0];
+            if (!file) return;
+            
+            const formData = new FormData();
+            formData.append('file', file);
+            
+            try {
+                const res = await fetch('/api/upload', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${currentToken}` },
+                    body: formData
+                });
+                
+                if (res.ok) {
+                    const data = await res.json();
+                    socket.send(JSON.stringify({
+                        type: 'file',
+                        fileUrl: data.fileUrl,
+                        fileType: data.fileType,
+                        originalName: data.originalName,
+                        roomId: currentRoom
+                    }));
+                }
+            } catch(e) {
+                console.error('Error uploading file:', e);
+            }
+        }
+
+        function addMessageToChat(msg, isOwn, scroll = true) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <strong>${isOwn ? 'Вы' : escapeHtml(msg.username)}</strong>
+                    <span>${new Date(msg.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <div class="message-content">${escapeHtml(msg.message)}</div>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            if (scroll) messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addFileToChat(data, isOwn) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn ? 'own' : 'other'}`;
+            
+            let content = '';
+            if (data.fileType === 'image') {
+                content = `<img src="${data.fileUrl}" class="message-image" onclick="window.open('${data.fileUrl}')">`;
+            } else {
+                content = `<a href="${data.fileUrl}" target="_blank">📎 ${escapeHtml(data.originalName)}</a>`;
+            }
+            
+            messageDiv.innerHTML = `
+                <div class="message-header">
+                    <strong>${isOwn ? 'Вы' : escapeHtml(data.username)}</strong>
+                </div>
+                <div class="message-content">${content}</div>
+            `;
+            
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const sysDiv = document.createElement('div');
+            sysDiv.style.textAlign = 'center';
+            sysDiv.style.fontSize = '0.8rem';
+            sysDiv.style.color = '#888';
+            sysDiv.style.padding = '0.5rem';
+            sysDiv.textContent = text;
+            messagesDiv.appendChild(sysDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function playNotification() {
+            const audio = document.getElementById('notificationSound');
+            audio.play().catch(e => console.log('Audio not supported'));
+        }
+
+        function startTyping() {
+            if (!isTyping) {
+                isTyping = true;
+                socket.send(JSON.stringify({ type: 'typing', isTyping: true }));
+            }
+            clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(stopTyping, 1000);
+        }
+
+        function stopTyping() {
+            if (isTyping) {
+                isTyping = false;
+                socket.send(JSON.stringify({ type: 'typing', isTyping: false }));
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Создание группы
+        createGroupBtn.onclick = () => {
+            const modal = document.getElementById('createGroupModal');
+            modal.style.display = 'flex';
+            
+            const friendsSelect = document.getElementById('friendsSelect');
+            friendsSelect.innerHTML = '';
+            friends.forEach(friend => {
+                const label = document.createElement('label');
+                label.className = 'friend-checkbox';
+                label.innerHTML = `
+                    <input type="checkbox" value="${friend.id}">
+                    ${escapeHtml(friend.username)}
+                `;
+                friendsSelect.appendChild(label);
+            });
+        };
+
+        // Создание личного чата
+        createDirectBtn.onclick = () => {
+            const modal = document.getElementById('createDirectModal');
+            modal.style.display = 'flex';
+            document.getElementById('searchUser').value = '';
+            document.getElementById('searchResults').innerHTML = '';
+            
+            let searchTimeout;
+            document.getElementById('searchUser').oninput = async (e) => {
+                clearTimeout(searchTimeout);
+                const query = e.target.value;
+                if (query.length < 2) return;
+                
+                searchTimeout = setTimeout(async () => {
+                    try {
+                        const res = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`, {
+                            headers: { 'Authorization': `Bearer ${currentToken}` }
+                        });
+                        const users = await res.json();
+                        
+                        const results = document.getElementById('searchResults');
+                        results.innerHTML = '';
+                        users.forEach(user => {
+                            const div = document.createElement('div');
+                            div.className = 'search-result-item';
+                            div.innerHTML = `
+                                <span>${escapeHtml(user.username)}</span>
+                                <button class="add-friend-btn">➕ Добавить</button>
+                            `;
+                            div.querySelector('.add-friend-btn').onclick = async () => {
+                                await addFriend(user.username);
+                                modal.style.display = 'none';
+                            };
+                            results.appendChild(div);
+                        });
+                    } catch(e) {
+                        console.error('Search error:', e);
+                    }
+                }, 300);
+            };
+        };
+
+        async function addFriend(username) {
+            try {
+                const res = await fetch('/api/friends/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ friendUsername: username })
+                });
+                
+                if (res.ok) {
+                    alert(`Запрос дружбы отправлен пользователю ${username}`);
+                    await loadFriends();
+                } else {
+                    const data = await res.json();
+                    alert(data.error || 'Ошибка при добавлении друга');
+                }
+            } catch(e) {
+                alert('Ошибка соединения');
+            }
+        }
+
+        document.getElementById('createGroupSubmit').onclick = async () => {
+            const groupName = document.getElementById('groupName').value;
+            const checkboxes = document.querySelectorAll('#friendsSelect input:checked');
+            const members = Array.from(checkboxes).map(cb => parseInt(cb.value));
+            
+            if (!groupName || members.length === 0) {
+                alert('Введите название группы и выберите хотя бы одного участника');
+                return;
+            }
+            
+            try {
+                const res = await fetch('/api/rooms/private', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ name: groupName, members })
+                });
+                
+                if (res.ok) {
+                    await loadRooms();
+                    document.getElementById('createGroupModal').style.display = 'none';
+                    document.getElementById('groupName').value = '';
+                    alert('Группа создана!');
+                }
+            } catch(e) {
+                alert('Ошибка создания группы');
+            }
+        };
+
+        // Закрытие модальных окон
+        document.querySelectorAll('.close').forEach(close => {
+            close.onclick = () => {
+                document.querySelectorAll('.modal').forEach(modal => modal.style.display = 'none');
+            };
+        });
+
+        // Event listeners
+        messageInput.addEventListener('input', startTyping);
+        sendBtn.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendMessage();
+        });
+
+        emojiBtn.addEventListener('click', () => {
+            emojiPicker.style.display = emojiPicker.style.display === 'none' ? 'grid' : 'none';
+            
+            if (emojiPicker.children.length === 0) {
+                emojis.forEach(emoji => {
+                    const span = document.createElement('span');
+                    span.textContent = emoji;
+                    span.onclick = () => {
+                        messageInput.value += emoji;
+                        emojiPicker.style.display = 'none';
+                        messageInput.focus();
+                    };
+                    emojiPicker.appendChild(span);
+                });
+            }
+        });
+
+        fileBtn.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', sendFile);
+        logoutBtn.addEventListener('click', () => {
+            if (socket) socket.close();
+            location.reload();
+        });
+
+        document.addEventListener('click', (e) => {
+            if (emojiBtn && !emojiBtn.contains(e.target) && emojiPicker && !emojiPicker.contains(e.target)) {
+                emojiPicker.style.display = 'none';
+            }
+        });
+    </script>
 </body>
 </html>
